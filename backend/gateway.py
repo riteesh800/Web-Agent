@@ -19,7 +19,12 @@ from agent_core.provider_failover import (
     analyze_provider_exception,
     execute_dialogue_query,
 )
-from agent_core.navigation_driver import BrowserSessionManager, BROWSER_SPEED_DIRECTIVES
+from agent_core.navigation_driver import (
+    BrowserSessionManager,
+    BROWSER_SPEED_DIRECTIVES,
+    HumanVerificationCoordinator,
+    build_verification_controller,
+)
 from browser_use import Agent
 
 service_logger = logging.getLogger("web_agent.gateway")
@@ -196,6 +201,23 @@ async def dialogue_turn_action(incoming_call):
         return JSONResponse({"error": str(caught_fault), "reply": f"❌ Error: {str(caught_fault)}"}, status_code=500)
 
 
+async def resume_verification_action(incoming_call):
+    try:
+        coordinator = HumanVerificationCoordinator.get_coordinator()
+        resumed = coordinator.resolve_verification()
+        if resumed:
+            return JSONResponse({
+                "success": True,
+                "message": "Human verification confirmed. Resuming browser agent...",
+            })
+        return JSONResponse({
+            "success": False,
+            "message": "No active verification gate found to resume.",
+        }, status_code=200)
+    except Exception as caught_fault:
+        return JSONResponse({"error": str(caught_fault)}, status_code=500)
+
+
 async def browser_agent_stream(incoming_call):
     goal_directive = incoming_call.query_params.get("task", "").strip()
     is_background = (
@@ -217,6 +239,20 @@ async def browser_agent_stream(incoming_call):
     agent_logger_handle = logging.getLogger("browser_use")
     agent_logger_handle.addHandler(collector_broker)
 
+    coordinator = HumanVerificationCoordinator.get_coordinator()
+    coordinator.reset()
+
+    def _on_verification_signal(evt_dict: dict):
+        try:
+            event_loop_ref.call_soon_threadsafe(
+                stream_queue.put_nowait,
+                {"__custom_event__": True, **evt_dict}
+            )
+        except Exception:
+            pass
+
+    coordinator.register_listener(_on_verification_signal)
+
     async def _stream_producer():
         try:
             yield f"data: {json.dumps({'type': 'status', 'text': 'Starting Edge Browser Navigation Pipeline...'})}\n\n"
@@ -230,11 +266,13 @@ async def browser_agent_stream(incoming_call):
             llm_runtime = construct_agent_llm(on_status_change=_publish_status)
             manager_handle = BrowserSessionManager.obtain_manager()
             browser_handle = await manager_handle.acquire_session(background_operation=is_background)
+            verification_controller = build_verification_controller()
 
             navigation_agent = Agent(
                 task=goal_directive,
                 llm=llm_runtime,
                 browser=browser_handle,
+                controller=verification_controller,
                 extend_system_message=BROWSER_SPEED_DIRECTIVES,
                 highlight_actions=False,
                 mode="ultrafast",
@@ -249,13 +287,21 @@ async def browser_agent_stream(incoming_call):
             while not async_worker.done():
                 try:
                     packet = await asyncio.wait_for(stream_queue.get(), timeout=0.25)
-                    yield f"data: {json.dumps({'type': 'log', 'text': packet})}\n\n"
+                    if isinstance(packet, dict) and packet.get("__custom_event__"):
+                        evt_type = packet.get("type", "verification_required")
+                        yield f"data: {json.dumps({'type': evt_type, 'reason': packet.get('reason', '')})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'log', 'text': str(packet)})}\n\n"
                 except asyncio.TimeoutError:
                     continue
 
             while not stream_queue.empty():
                 packet = stream_queue.get_nowait()
-                yield f"data: {json.dumps({'type': 'log', 'text': packet})}\n\n"
+                if isinstance(packet, dict) and packet.get("__custom_event__"):
+                    evt_type = packet.get("type", "verification_required")
+                    yield f"data: {json.dumps({'type': evt_type, 'reason': packet.get('reason', '')})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'log', 'text': str(packet)})}\n\n"
 
             loop_outcome = await async_worker
             extracted_text, is_healthy = manager_handle.extract_task_conclusion(loop_outcome)
@@ -278,6 +324,7 @@ async def browser_agent_stream(incoming_call):
             else:
                 yield f"data: {json.dumps({'type': 'error', 'text': str(caught_fault)})}\n\n"
         finally:
+            coordinator.reset()
             agent_logger_handle.removeHandler(collector_broker)
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -309,6 +356,7 @@ def build_server_app() -> Starlette:
         Route("/media/brand_mark.png", serve_brand_mark, methods=["GET"]),
         Route("/logo.png", serve_brand_mark, methods=["GET"]),
         Route("/api/run", browser_agent_stream, methods=["GET"]),
+        Route("/api/resume-verification", resume_verification_action, methods=["POST"]),
         Route("/api/chat", dialogue_turn_action, methods=["POST"]),
         Route("/api/keys", get_keys_action, methods=["GET"]),
         Route("/api/history", get_task_history_action, methods=["GET"]),

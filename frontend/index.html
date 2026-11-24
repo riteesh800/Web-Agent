@@ -140,6 +140,27 @@
                 </div>
             </div>
 
+            <!-- Human Verification / CAPTCHA Alert Card -->
+            <div class="card verification-card" id="humanVerificationCard" style="display:none;">
+                <div class="verification-badge">
+                    <span class="verification-icon">🛡️</span>
+                    <span>Human Verification Required</span>
+                </div>
+                <div class="verification-body">
+                    <div class="verification-info">
+                        <h3 class="verification-title">Security Check / CAPTCHA Detected</h3>
+                        <p class="verification-desc" id="verificationPromptMessage">
+                            A verification challenge was detected. Please switch to your open <strong>Microsoft Edge</strong> window, complete the verification, and click <strong>Done</strong> below to continue.
+                        </p>
+                    </div>
+                    <div class="verification-actions">
+                        <button type="button" id="btnConfirmVerification" class="btn btn-verification-confirm" onclick="confirmVerificationDone()">
+                            <span>✔ Done (Continue Task)</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <div class="card terminal-card" id="liveTerminalCard" style="display:none;">
                 <div class="terminal-bar">
                     <div class="terminal-heading">

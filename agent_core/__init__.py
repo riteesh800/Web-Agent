@@ -5,7 +5,12 @@ from .provider_failover import (
     analyze_provider_exception,
     execute_dialogue_query,
 )
-from .navigation_driver import BrowserSessionManager, BROWSER_SPEED_DIRECTIVES
+from .navigation_driver import (
+    BrowserSessionManager,
+    BROWSER_SPEED_DIRECTIVES,
+    HumanVerificationCoordinator,
+    build_verification_controller,
+)
 
 __all__ = [
     "ConsoleLogCollector",
@@ -15,4 +20,6 @@ __all__ = [
     "execute_dialogue_query",
     "BrowserSessionManager",
     "BROWSER_SPEED_DIRECTIVES",
+    "HumanVerificationCoordinator",
+    "build_verification_controller",
 ]

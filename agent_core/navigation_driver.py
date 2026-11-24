@@ -1,7 +1,7 @@
 import asyncio
-from typing import Any, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
-from browser_use import Agent, Browser
+from browser_use import Agent, Browser, Controller
 from browser_use.agent.loop import last_text
 
 from .provider_failover import construct_agent_llm, analyze_provider_exception
@@ -16,11 +16,85 @@ BROWSER_SPEED_DIRECTIVES = (
     "   - Append sort query arguments directly to URL for 0-step sorting (e.g. Amazon: `&s=price-asc-rank`).\n\n"
     "3. RAPID DOM EXTRACTION:\n"
     "   - Extract structured cards or listings using concise JavaScript evaluation rather than parsing massive accessibility trees.\n\n"
-    "4. CAPTCHA HANDLING:\n"
-    "   - Pause for human intervention if interactive challenges or bot-detection screens appear.\n\n"
+    "4. CAPTCHA & HUMAN VERIFICATION HANDLING:\n"
+    "   - When ANY security check, CAPTCHA, reCAPTCHA, hCaptcha, Cloudflare turnstile, or 'verify you are human' prompt appears:\n"
+    "     DO NOT attempt to solve, guess, or bypass it automatically.\n"
+    "     Immediately call `pause_for_human_verification` with a brief description of the challenge.\n"
+    "     The frontend UI will alert the user to complete verification in the visible Microsoft Edge window.\n"
+    "     Once resumed, re-inspect the page DOM and proceed with the task.\n\n"
     "5. STRUCTURED REPORTING:\n"
     "   - Conclude with a clean, bulleted Markdown synthesis including product names, links, and pricing."
 )
+
+
+class HumanVerificationCoordinator:
+    _instance: Optional["HumanVerificationCoordinator"] = None
+
+    def __init__(self):
+        self.active_gate: Optional[asyncio.Event] = None
+        self.is_waiting: bool = False
+        self.last_reason: str = ""
+        self._listener: Optional[Callable[[Dict[str, Any]], None]] = None
+
+    @classmethod
+    def get_coordinator(cls) -> "HumanVerificationCoordinator":
+        if cls._instance is None:
+            cls._instance = HumanVerificationCoordinator()
+        return cls._instance
+
+    def register_listener(self, listener: Optional[Callable[[Dict[str, Any]], None]]):
+        self._listener = listener
+
+    async def pause_for_verification(self, reason: str = "CAPTCHA or security challenge detected on page") -> str:
+        self.is_waiting = True
+        self.last_reason = reason
+        self.active_gate = asyncio.Event()
+
+        if self._listener:
+            try:
+                self._listener({
+                    "type": "verification_required",
+                    "reason": reason,
+                })
+            except Exception:
+                pass
+
+        try:
+            await self.active_gate.wait()
+            return "Human verification confirmed by user. Re-inspect the page DOM and proceed with the browsing directive."
+        finally:
+            self.is_waiting = False
+            self.active_gate = None
+
+    def resolve_verification(self) -> bool:
+        if self.active_gate and not self.active_gate.is_set():
+            self.active_gate.set()
+            return True
+        return False
+
+    def reset(self):
+        if self.active_gate and not self.active_gate.is_set():
+            self.active_gate.set()
+        self.is_waiting = False
+        self.active_gate = None
+        self.last_reason = ""
+
+
+def build_verification_controller() -> Controller:
+    controller = Controller()
+
+    @controller.action(
+        description=(
+            "Pause execution for human verification when ANY anti-bot challenge, CAPTCHA, reCAPTCHA, "
+            "hCaptcha, Cloudflare turnstile, or 'verify you are human' prompt appears on the page. "
+            "Alerts the user in the frontend UI to complete the verification in Microsoft Edge."
+        )
+    )
+    async def pause_for_human_verification(reason: str = "CAPTCHA or security challenge detected") -> str:
+        coordinator = HumanVerificationCoordinator.get_coordinator()
+        return await coordinator.pause_for_verification(reason)
+
+    return controller
 
 
 class BrowserSessionManager:

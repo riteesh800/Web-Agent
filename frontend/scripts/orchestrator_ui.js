@@ -369,6 +369,11 @@ function triggerBrowserWorkflow() {
     const logsDisplaySection = document.getElementById('liveTerminalCard');
     const summaryDisplayCard = document.getElementById('summaryDisplayCard');
     const summaryContentContainer = document.getElementById('summaryContentContainer');
+    const verificationCard = document.getElementById('humanVerificationCard');
+
+    if (verificationCard) {
+        verificationCard.style.display = 'none';
+    }
 
     logsDisplaySection.style.display = 'flex';
     summaryDisplayCard.style.display = 'none';
@@ -393,7 +398,33 @@ function triggerBrowserWorkflow() {
                 appendLogItem(receivedPacket.text, 'entry-status');
             } else if (receivedPacket.type === 'log') {
                 appendLogItem(receivedPacket.text);
+            } else if (receivedPacket.type === 'verification_required') {
+                const card = document.getElementById('humanVerificationCard');
+                const promptDesc = document.getElementById('verificationPromptMessage');
+                const confirmBtn = document.getElementById('btnConfirmVerification');
+
+                if (card) {
+                    card.style.display = 'block';
+                    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+                if (promptDesc) {
+                    const challengeReason = receivedPacket.reason || 'CAPTCHA / bot-detection challenge detected on page.';
+                    promptDesc.innerHTML = `<strong>${escapeHtml(challengeReason)}</strong><br>Please switch to your open <strong>Microsoft Edge</strong> browser window, complete the verification, and click <strong>Done</strong> below to continue.`;
+                }
+                if (confirmBtn) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.innerHTML = '<span>✔ Done (Continue Task)</span>';
+                }
+                appendLogItem(`🛡️ [Verification Required] ${receivedPacket.reason || 'Human verification required in Edge browser.'}`, 'entry-warn');
+            } else if (receivedPacket.type === 'verification_completed') {
+                const card = document.getElementById('humanVerificationCard');
+                if (card) {
+                    card.style.display = 'none';
+                }
+                appendLogItem(receivedPacket.text || '✔ Verification confirmed. Resuming browser agent...', 'entry-status');
             } else if (receivedPacket.type === 'result') {
+                const card = document.getElementById('humanVerificationCard');
+                if (card) card.style.display = 'none';
                 retainedResearchOutput = receivedPacket.text;
                 summaryDisplayCard.style.display = 'flex';
                 summaryContentContainer.innerHTML = marked.parse(receivedPacket.text);
@@ -406,8 +437,12 @@ function triggerBrowserWorkflow() {
                     statusHeadingElement.style.color = '#fbbf24';
                 }
             } else if (receivedPacket.type === 'error' || receivedPacket.type === 'api_limit') {
+                const card = document.getElementById('humanVerificationCard');
+                if (card) card.style.display = 'none';
                 appendLogItem(receivedPacket.text, 'entry-err');
             } else if (receivedPacket.type === 'done') {
+                const card = document.getElementById('humanVerificationCard');
+                if (card) card.style.display = 'none';
                 activeLiveStreamConnection.close();
                 activeLiveStreamConnection = null;
                 triggerTaskButton.disabled = false;
@@ -420,6 +455,8 @@ function triggerBrowserWorkflow() {
     };
 
     activeLiveStreamConnection.onerror = () => {
+        const card = document.getElementById('humanVerificationCard');
+        if (card) card.style.display = 'none';
         appendLogItem('Stream connection concluded.', 'entry-warn');
         if (activeLiveStreamConnection) {
             activeLiveStreamConnection.close();
@@ -429,6 +466,46 @@ function triggerBrowserWorkflow() {
         triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
         fetchTaskHistory();
     };
+}
+
+function escapeHtml(rawString) {
+    if (!rawString) return '';
+    const tempDiv = document.createElement('div');
+    tempDiv.textContent = rawString;
+    return tempDiv.innerHTML;
+}
+
+async function confirmVerificationDone() {
+    const confirmBtn = document.getElementById('btnConfirmVerification');
+    if (confirmBtn) {
+        confirmBtn.disabled = true;
+        confirmBtn.innerHTML = '<span>⏳ Resuming Agent...</span>';
+    }
+
+    try {
+        const res = await fetch('/api/resume-verification', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const packet = await res.json();
+        if (res.ok && packet.success) {
+            appendLogItem(`✔ ${packet.message || 'Verification confirmation sent to browser agent.'}`, 'entry-status');
+            const card = document.getElementById('humanVerificationCard');
+            if (card) card.style.display = 'none';
+        } else {
+            appendLogItem(`Notice: ${packet.message || 'Agent not currently waiting on verification.'}`, 'entry-warn');
+            const card = document.getElementById('humanVerificationCard');
+            if (card) card.style.display = 'none';
+        }
+    } catch (networkFault) {
+        appendLogItem(`Failed to notify agent: ${networkFault.message}`, 'entry-err');
+        if (confirmBtn) {
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<span>✔ Done (Continue Task)</span>';
+        }
+    }
+}
 }
 
 function duplicateSummaryContent() {

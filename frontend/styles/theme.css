@@ -1056,3 +1056,97 @@ textarea:focus {
     font-style: italic;
     padding: 0.25rem 0;
 }
+
+/* Human Verification / CAPTCHA Alert Card */
+.verification-card {
+    background: #171f33;
+    border: 2px solid rgba(245, 158, 11, 0.65);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    box-shadow: 0 8px 24px rgba(245, 158, 11, 0.15), 0 0 20px rgba(245, 158, 11, 0.1);
+    animation: pulseBorder 2.5s infinite ease-in-out;
+}
+
+@keyframes pulseBorder {
+    0%, 100% {
+        border-color: rgba(245, 158, 11, 0.5);
+        box-shadow: 0 8px 24px rgba(245, 158, 11, 0.12);
+    }
+    50% {
+        border-color: rgba(245, 158, 11, 0.95);
+        box-shadow: 0 8px 28px rgba(245, 158, 11, 0.28), 0 0 16px rgba(245, 158, 11, 0.2);
+    }
+}
+
+.verification-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    padding: 0.25rem 0.65rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    width: fit-content;
+    margin-bottom: 0.75rem;
+}
+
+.verification-body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.verification-info {
+    flex: 1;
+    min-width: 260px;
+}
+
+.verification-title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #f8fafc;
+    margin-bottom: 0.35rem;
+}
+
+.verification-desc {
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.verification-desc strong {
+    color: #38bdf8;
+}
+
+.btn-verification-confirm {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #ffffff;
+    font-size: 0.92rem;
+    font-weight: 600;
+    padding: 0.75rem 1.4rem;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+    transition: all 0.18s ease;
+    white-space: nowrap;
+}
+
+.btn-verification-confirm:hover:not(:disabled) {
+    background: linear-gradient(135deg, #059669 0%, #047857 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.45);
+}
+
+.btn-verification-confirm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
