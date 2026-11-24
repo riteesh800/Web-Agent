@@ -26,7 +26,7 @@ A full-stack web application that combines **autonomous browser automation** (vi
 ```
 ├── bootstrap.py              # Entry point
 ├── dependencies.txt           # Python dependencies
-├── agent_secrets.env          # API keys (gitignored)
+├── .env                      # API keys (gitignored)
 ├── agent_core/
 │   ├── navigation_driver.py   # Browser session management
 │   ├── provider_failover.py   # Multi-LLM failover logic
