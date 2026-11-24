@@ -21,6 +21,9 @@
                 </div>
             </div>
             <div class="status-pills">
+                <button type="button" id="openApiModalBtn" class="pill pill-api" onclick="toggleApiModal()" title="Configure API Provider and Keys">
+                    <span>🔑</span> API ▾
+                </button>
                 <div class="pill pill-edge">
                     <span>✔</span> Microsoft Edge
                 </div>
@@ -30,24 +33,61 @@
             </div>
         </header>
 
-        <section class="card setup-card" id="tokenManagerSection">
-            <div class="setup-header">
-                <div>
-                    <strong class="setup-title">🔑 API Key Configuration</strong>
-                    <span class="setup-desc">Primary Chat uses OpenRouter Free. Edge Browser Agent uses Gemini & Groq fallback:</span>
+        <!-- Floating API Configuration Dialog -->
+        <div id="apiConfigModal" class="api-modal-container" style="display:none;">
+            <div class="api-modal-backdrop" onclick="closeApiModal()"></div>
+            <div class="api-modal-card">
+                <div class="api-modal-header">
+                    <div class="api-modal-title">
+                        <span>🔑</span>
+                        <span>API Configuration</span>
+                    </div>
+                    <button type="button" class="api-modal-close" onclick="closeApiModal()" title="Close">✕</button>
                 </div>
-                <div class="token-links">
-                    <a href="https://openrouter.ai/keys" target="_blank" class="link-openrouter">🌐 OpenRouter Key</a>
-                    <a href="https://console.groq.com/keys" target="_blank" class="link-groq">⚡ Groq Key (Free)</a>
-                    <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link-gemini">✨ Gemini Key</a>
+
+                <div class="api-modal-body">
+                    <div class="form-group">
+                        <div class="form-label-row">
+                            <label for="apiProviderSelect" class="form-label">Select API Provider</label>
+                            <span id="providerEnvStatusTag" class="env-tag-badge"></span>
+                        </div>
+                        <div class="select-wrapper">
+                            <select id="apiProviderSelect" onchange="onProviderSelectChanged()">
+                                <option value="openrouter">OpenRouter (Free / Multi-Engine)</option>
+                                <option value="gemini">Google Gemini (Gemini Flash Lite)</option>
+                                <option value="groq">Groq (Free / Ultra-fast)</option>
+                                <option value="openai">OpenAI (GPT-4o)</option>
+                                <option value="anthropic">Anthropic (Claude 3.5)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="form-label-row">
+                            <label for="apiKeyInputField" class="form-label">API Key</label>
+                            <a id="providerPortalLink" href="https://openrouter.ai/keys" target="_blank" class="provider-portal-link">Get Key ↗</a>
+                        </div>
+                        <div class="input-with-toggle">
+                            <input type="password" id="apiKeyInputField" placeholder="Enter API Key (sk-or-v1-..., AQ...., gsk_...)" autocomplete="off">
+                            <button type="button" class="btn-mask-toggle" onclick="toggleKeyVisibility()" id="btnKeyVisibility" title="Show/Hide Key">👁️</button>
+                        </div>
+                    </div>
+
+                    <!-- Feedback message: strictly above Test API button and below the API key input box -->
+                    <div id="apiFeedbackBox" class="api-feedback-msg" style="display:none;"></div>
+
+                    <!-- Two options below: Test API and Set API -->
+                    <div class="api-actions-row">
+                        <button type="button" id="btnTestApi" class="btn btn-test-api" onclick="testCurrentApi()">
+                            <span>🧪</span> Test API
+                        </button>
+                        <button type="button" id="btnSetApi" class="btn btn-set-api" onclick="setCurrentApi()">
+                            <span>💾</span> Set API
+                        </button>
+                    </div>
                 </div>
             </div>
-            <div class="setup-input-row">
-                <input type="password" id="secretInputField" placeholder="Paste OpenRouter (sk-or-v1-...), Groq (gsk_...), or Gemini (AQ./AIzaSy...) key here">
-                <button id="saveSecretButton" class="btn btn-primary" onclick="storeSecretToken()">💾 Save Token</button>
-            </div>
-            <div id="statusFeedbackBox" class="setup-feedback" style="display:none;"></div>
-        </section>
+        </div>
 
         <nav class="mode-navigation">
             <button class="nav-button active" id="tabBrowserController" onclick="switchApplicationView('browser')">

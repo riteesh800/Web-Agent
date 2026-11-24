@@ -3,6 +3,216 @@ let retainedResearchOutput = '';
 let conversationHistoryRecords = [];
 let activeLiveStreamConnection = null;
 
+let cachedEnvKeys = {
+    openrouter: '',
+    gemini: '',
+    groq: '',
+    openai: '',
+    anthropic: '',
+};
+
+const providerPortalMap = {
+    openrouter: 'https://openrouter.ai/keys',
+    gemini: 'https://aistudio.google.com/app/apikey',
+    groq: 'https://console.groq.com/keys',
+    openai: 'https://platform.openai.com/api-keys',
+    anthropic: 'https://console.anthropic.com/settings/keys',
+};
+
+async function fetchEnvKeys() {
+    try {
+        const response = await fetch('/api/keys');
+        if (response.ok) {
+            const keysData = await response.json();
+            cachedEnvKeys = { ...cachedEnvKeys, ...keysData };
+            syncCurrentProviderDisplay();
+        }
+    } catch (err) {
+        console.warn('Failed to load keys from env:', err);
+    }
+}
+
+function syncCurrentProviderDisplay() {
+    const select = document.getElementById('apiProviderSelect');
+    const input = document.getElementById('apiKeyInputField');
+    const statusTag = document.getElementById('providerEnvStatusTag');
+    const portalLink = document.getElementById('providerPortalLink');
+
+    if (!select || !input) return;
+
+    const currentProvider = select.value || 'openrouter';
+    const savedKey = cachedEnvKeys[currentProvider] || '';
+
+    // "if that api already there in .env it should set from there only in the very next movment of selecting api provider name"
+    input.value = savedKey;
+
+    if (portalLink && providerPortalMap[currentProvider]) {
+        portalLink.href = providerPortalMap[currentProvider];
+    }
+
+    if (statusTag) {
+        if (savedKey) {
+            statusTag.className = 'env-tag-badge badge-set';
+            statusTag.textContent = '✔ Set in .env';
+        } else {
+            statusTag.className = 'env-tag-badge badge-empty';
+            statusTag.textContent = 'Not in .env';
+        }
+    }
+}
+
+function toggleApiModal() {
+    const modal = document.getElementById('apiConfigModal');
+    if (!modal) return;
+
+    if (modal.style.display === 'none' || !modal.style.display) {
+        modal.style.display = 'block';
+        const feedbackBox = document.getElementById('apiFeedbackBox');
+        if (feedbackBox) feedbackBox.style.display = 'none';
+        fetchEnvKeys();
+    } else {
+        closeApiModal();
+    }
+}
+
+function closeApiModal() {
+    const modal = document.getElementById('apiConfigModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function onProviderSelectChanged() {
+    // "if that api already there in .env it should set from there only in the very next movment of selecting api provider name"
+    syncCurrentProviderDisplay();
+
+    // Clear any previous feedback box when switching provider
+    const feedbackBox = document.getElementById('apiFeedbackBox');
+    if (feedbackBox) {
+        feedbackBox.style.display = 'none';
+        feedbackBox.textContent = '';
+    }
+}
+
+function toggleKeyVisibility() {
+    const input = document.getElementById('apiKeyInputField');
+    const toggleBtn = document.getElementById('btnKeyVisibility');
+    if (!input) return;
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        if (toggleBtn) toggleBtn.textContent = '🔒';
+    } else {
+        input.type = 'password';
+        if (toggleBtn) toggleBtn.textContent = '👁️';
+    }
+}
+
+async function testCurrentApi() {
+    const select = document.getElementById('apiProviderSelect');
+    const input = document.getElementById('apiKeyInputField');
+    const feedbackBox = document.getElementById('apiFeedbackBox');
+    const testBtn = document.getElementById('btnTestApi');
+
+    if (!select || !input || !feedbackBox) return;
+
+    const provider = select.value;
+    const key = input.value.trim();
+
+    if (!key) {
+        feedbackBox.className = 'api-feedback-msg api-feedback-error';
+        feedbackBox.textContent = 'Please enter or select an API key to test.';
+        feedbackBox.style.display = 'block';
+        input.focus();
+        return;
+    }
+
+    testBtn.disabled = true;
+    const originalText = testBtn.innerHTML;
+    testBtn.innerHTML = '<span>⏳</span> Testing...';
+    feedbackBox.style.display = 'none';
+
+    try {
+        const response = await fetch('/api/test-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, key }),
+        });
+
+        const result = await response.json();
+
+        // "if is get correct response show in small gren text api tex success else show the real error in the frontend above the test api button below the api key enter box."
+        if (result.success) {
+            feedbackBox.className = 'api-feedback-msg api-feedback-success';
+            feedbackBox.textContent = '✔ api test success';
+            feedbackBox.style.display = 'block';
+        } else {
+            feedbackBox.className = 'api-feedback-msg api-feedback-error';
+            feedbackBox.textContent = result.error || 'API validation failed';
+            feedbackBox.style.display = 'block';
+        }
+    } catch (networkFault) {
+        feedbackBox.className = 'api-feedback-msg api-feedback-error';
+        feedbackBox.textContent = `Network error: ${networkFault.message}`;
+        feedbackBox.style.display = 'block';
+    } finally {
+        testBtn.disabled = false;
+        testBtn.innerHTML = originalText;
+    }
+}
+
+async function setCurrentApi() {
+    const select = document.getElementById('apiProviderSelect');
+    const input = document.getElementById('apiKeyInputField');
+    const feedbackBox = document.getElementById('apiFeedbackBox');
+    const setBtn = document.getElementById('btnSetApi');
+
+    if (!select || !input || !feedbackBox) return;
+
+    const provider = select.value;
+    const key = input.value.trim();
+
+    if (!key) {
+        feedbackBox.className = 'api-feedback-msg api-feedback-error';
+        feedbackBox.textContent = 'API key cannot be blank.';
+        feedbackBox.style.display = 'block';
+        input.focus();
+        return;
+    }
+
+    setBtn.disabled = true;
+    const originalText = setBtn.innerHTML;
+    setBtn.innerHTML = '<span>⏳</span> Saving...';
+
+    try {
+        const response = await fetch('/api/save-key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider, key }),
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+            cachedEnvKeys[provider] = key;
+            syncCurrentProviderDisplay();
+
+            feedbackBox.className = 'api-feedback-msg api-feedback-success';
+            feedbackBox.textContent = `✔ ${result.message || 'API key saved to .env and activated'}`;
+            feedbackBox.style.display = 'block';
+        } else {
+            feedbackBox.className = 'api-feedback-msg api-feedback-error';
+            feedbackBox.textContent = result.error || 'Failed to save API key to .env';
+            feedbackBox.style.display = 'block';
+        }
+    } catch (networkFault) {
+        feedbackBox.className = 'api-feedback-msg api-feedback-error';
+        feedbackBox.textContent = `Network error: ${networkFault.message}`;
+        feedbackBox.style.display = 'block';
+    } finally {
+        setBtn.disabled = false;
+        setBtn.innerHTML = originalText;
+    }
+}
+
 function switchApplicationView(targetView) {
     selectedViewMode = targetView;
     const tabBrowser = document.getElementById('tabBrowserController');
@@ -27,6 +237,7 @@ function switchApplicationView(targetView) {
 async function storeSecretToken() {
     const inputElement = document.getElementById('secretInputField');
     const feedbackBox = document.getElementById('statusFeedbackBox');
+    if (!inputElement || !feedbackBox) return;
     const secretValue = inputElement.value.trim();
 
     if (!secretValue) {
@@ -280,6 +491,14 @@ async function sendUserQuery() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    fetchEnvKeys();
+
+    document.addEventListener('keydown', (keyboardEvent) => {
+        if (keyboardEvent.key === 'Escape') {
+            closeApiModal();
+        }
+    });
+
     const promptTextareaField = document.getElementById('chatQueryInputBox');
     if (promptTextareaField) {
         promptTextareaField.addEventListener('keydown', (keyboardEvent) => {

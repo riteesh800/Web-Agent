@@ -38,14 +38,93 @@ async def serve_brand_mark(incoming_call):
     return HTMLResponse(status_code=404)
 
 
+async def get_keys_action(incoming_call):
+    ConfigRegistry.sync_environment()
+    return JSONResponse({
+        "openrouter": ConfigRegistry.lookup_secret("OPENROUTER_API_KEY") or "",
+        "gemini": ConfigRegistry.lookup_secret("GOOGLE_API_KEY", "GEMINI_API_KEY") or "",
+        "groq": ConfigRegistry.lookup_secret("GROQ_API_KEY") or "",
+        "openai": ConfigRegistry.lookup_secret("OPENAI_API_KEY") or "",
+        "anthropic": ConfigRegistry.lookup_secret("ANTHROPIC_API_KEY") or "",
+    })
+
+
+async def test_key_action(incoming_call):
+    try:
+        payload_dict = await incoming_call.json()
+        provider_name = (payload_dict.get("provider", "")).strip().lower()
+        key_val = (payload_dict.get("key", "")).strip()
+
+        if not key_val:
+            return JSONResponse({"success": False, "error": "Please enter an API key to test."}, status_code=200)
+
+        if provider_name == "openrouter":
+            import openai
+            client = openai.OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key_val, timeout=12.0)
+            client.models.list()
+            return JSONResponse({"success": True, "message": "api test success"})
+
+        elif provider_name == "gemini":
+            from google import genai
+            client = genai.Client(api_key=key_val)
+            client.models.generate_content(model="gemini-flash-lite-latest", contents="hi")
+            return JSONResponse({"success": True, "message": "api test success"})
+
+        elif provider_name == "groq":
+            import openai
+            client = openai.OpenAI(base_url="https://api.groq.com/openai/v1", api_key=key_val, timeout=12.0)
+            client.models.list()
+            return JSONResponse({"success": True, "message": "api test success"})
+
+        elif provider_name == "openai":
+            import openai
+            client = openai.OpenAI(api_key=key_val, timeout=12.0)
+            client.models.list()
+            return JSONResponse({"success": True, "message": "api test success"})
+
+        elif provider_name == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=key_val, timeout=12.0)
+            client.models.list()
+            return JSONResponse({"success": True, "message": "api test success"})
+
+        else:
+            return JSONResponse({"success": False, "error": f"Unknown provider: {provider_name}"}, status_code=200)
+
+    except Exception as exc:
+        err_msg = str(exc)
+        if hasattr(exc, "message") and exc.message:
+            err_msg = str(exc.message)
+        elif hasattr(exc, "body") and isinstance(exc.body, dict) and "error" in exc.body:
+            err = exc.body["error"]
+            if isinstance(err, dict) and "message" in err:
+                err_msg = err["message"]
+            else:
+                err_msg = str(err)
+        elif "message': '" in err_msg:
+            try:
+                start = err_msg.index("message': '") + len("message': '")
+                end = err_msg.index("'", start)
+                err_msg = err_msg[start:end]
+            except Exception:
+                pass
+        return JSONResponse({"success": False, "error": err_msg}, status_code=200)
+
+
 async def save_token_action(incoming_call):
     try:
         payload_dict = await incoming_call.json()
         raw_token_entry = payload_dict.get("key", "").strip()
+        provider_name = payload_dict.get("provider", "").strip().lower()
+
         if not raw_token_entry:
             return JSONResponse({"error": "Empty credential provided"}, status_code=400)
 
-        is_stored, vendor_title, outcome_memo = VaultManager.store_secret_token(raw_token_entry)
+        if provider_name:
+            is_stored, vendor_title, outcome_memo = VaultManager.set_provider_secret(provider_name, raw_token_entry)
+        else:
+            is_stored, vendor_title, outcome_memo = VaultManager.store_secret_token(raw_token_entry)
+
         if not is_stored:
             return JSONResponse({"error": outcome_memo}, status_code=400)
 
@@ -197,7 +276,10 @@ def build_server_app() -> Starlette:
         Route("/logo.png", serve_brand_mark, methods=["GET"]),
         Route("/api/run", browser_agent_stream, methods=["GET"]),
         Route("/api/chat", dialogue_turn_action, methods=["POST"]),
+        Route("/api/keys", get_keys_action, methods=["GET"]),
+        Route("/api/test-key", test_key_action, methods=["POST"]),
         Route("/api/save-key", save_token_action, methods=["POST"]),
+        Route("/api/set-key", save_token_action, methods=["POST"]),
         Route("/api/health", system_readiness_check, methods=["GET"]),
         Mount("/static", StaticFiles(directory=str(static_assets_path)), name="static"),
     ]

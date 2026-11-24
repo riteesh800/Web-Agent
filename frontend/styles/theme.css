@@ -102,10 +102,299 @@ body {
     border: 1px solid rgba(2, 132, 199, 0.35);
 }
 
+.pill-api {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.pill-api:hover {
+    background: rgba(245, 158, 11, 0.28);
+    border-color: #fbbf24;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25);
+}
+
 .pill-multi {
     background: rgba(139, 92, 246, 0.15);
     color: #c084fc;
     border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
+/* Floating API Configuration Modal */
+.api-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 17, 32, 0.75);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+}
+
+.api-modal-card {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 92%;
+    max-width: 480px;
+    background: #131b2e;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: 14px;
+    box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6), 0 0 25px rgba(245, 158, 11, 0.15);
+    z-index: 1001;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    animation: modalFadeIn 0.18s ease-out;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; transform: translate(-50%, -48%); }
+    to { opacity: 1; transform: translate(-50%, -50%); }
+}
+
+.api-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.75rem;
+}
+
+.api-modal-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #fbbf24;
+}
+
+.api-modal-close {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.2rem 0.5rem;
+    border-radius: 6px;
+    line-height: 1;
+    transition: all 0.15s ease;
+}
+
+.api-modal-close:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.api-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.form-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.form-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #cbd5e1;
+}
+
+.env-tag-badge {
+    font-size: 0.72rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+}
+
+.env-tag-badge.badge-set {
+    background: rgba(52, 211, 153, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(52, 211, 153, 0.35);
+}
+
+.env-tag-badge.badge-empty {
+    background: rgba(148, 163, 184, 0.15);
+    color: #94a3b8;
+    border: 1px solid rgba(148, 163, 184, 0.3);
+}
+
+.provider-portal-link {
+    font-size: 0.75rem;
+    color: #38bdf8;
+    text-decoration: underline;
+    font-weight: 600;
+}
+
+.provider-portal-link:hover {
+    color: #7dd3fc;
+}
+
+.select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.select-wrapper select {
+    width: 100%;
+    background: #0b1120;
+    border: 1px solid var(--border-color);
+    padding: 0.65rem 2rem 0.65rem 0.85rem;
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.88rem;
+    font-family: inherit;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    transition: border-color 0.15s ease;
+}
+
+.select-wrapper select:focus {
+    border-color: #fbbf24;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.select-wrapper::after {
+    content: '▼';
+    position: absolute;
+    right: 0.85rem;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.65rem;
+    color: #94a3b8;
+    pointer-events: none;
+}
+
+.input-with-toggle {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.input-with-toggle input {
+    width: 100%;
+    background: #0b1120;
+    border: 1px solid var(--border-color);
+    padding: 0.65rem 3rem 0.65rem 0.85rem;
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.input-with-toggle input:focus {
+    border-color: #fbbf24;
+    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+}
+
+.btn-mask-toggle {
+    position: absolute;
+    right: 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+}
+
+.btn-mask-toggle:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.api-feedback-msg {
+    padding: 0.55rem 0.85rem;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    line-height: 1.45;
+    word-break: break-word;
+}
+
+.api-feedback-success {
+    color: #34d399;
+    background: rgba(52, 211, 153, 0.12);
+    border: 1px solid rgba(52, 211, 153, 0.35);
+    font-weight: 600;
+}
+
+.api-feedback-error {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.35);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+}
+
+.api-actions-row {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.25rem;
+}
+
+.btn-test-api {
+    flex: 1;
+    background: rgba(139, 92, 246, 0.2);
+    border: 1px solid rgba(139, 92, 246, 0.45);
+    color: #c084fc;
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    transition: all 0.15s ease;
+}
+
+.btn-test-api:hover {
+    background: rgba(139, 92, 246, 0.32);
+    transform: translateY(-1px);
+}
+
+.btn-set-api {
+    flex: 1;
+    background: #0284c7;
+    border: 1px solid #0369a1;
+    color: white;
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.88rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    transition: all 0.15s ease;
+}
+
+.btn-set-api:hover {
+    background: #0369a1;
+    transform: translateY(-1px);
 }
 
 .card {

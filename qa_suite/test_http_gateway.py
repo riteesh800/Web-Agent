@@ -50,6 +50,40 @@ class TestHttpGateway(unittest.TestCase):
         self.assertIn("text/event-stream", http_packet.headers["content-type"])
         self.assertIn("Task directive is required", http_packet.text)
 
+    def test_get_keys_endpoint(self):
+        http_packet = self.http_tester.get("/api/keys")
+        self.assertEqual(http_packet.status_code, 200)
+        payload = http_packet.json()
+        self.assertIn("openrouter", payload)
+        self.assertIn("gemini", payload)
+        self.assertIn("groq", payload)
+
+    def test_test_key_empty_guard(self):
+        http_packet = self.http_tester.post("/api/test-key", json={"provider": "groq", "key": ""})
+        self.assertEqual(http_packet.status_code, 200)
+        payload = http_packet.json()
+        self.assertFalse(payload["success"])
+        self.assertIn("Please enter an API key", payload["error"])
+
+    def test_test_key_invalid_provider_returns_error(self):
+        http_packet = self.http_tester.post("/api/test-key", json={"provider": "unknown_provider", "key": "some_key"})
+        self.assertEqual(http_packet.status_code, 200)
+        payload = http_packet.json()
+        self.assertFalse(payload["success"])
+        self.assertIn("Unknown provider", payload["error"])
+
+    def test_save_key_with_provider_endpoint(self):
+        original_groq = os.getenv("GROQ_API_KEY", "")
+        try:
+            http_packet = self.http_tester.post("/api/save-key", json={"provider": "groq", "key": "gsk_unittest_sample_key"})
+            self.assertEqual(http_packet.status_code, 200)
+            payload = http_packet.json()
+            self.assertTrue(payload["success"])
+            self.assertEqual(payload["provider"], "Groq")
+        finally:
+            if original_groq:
+                self.http_tester.post("/api/save-key", json={"provider": "groq", "key": original_groq})
+
 
 if __name__ == "__main__":
     unittest.main()
