@@ -12,6 +12,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from core_config.environment_loader import ConfigRegistry, VaultManager
+from core_config.history_db import TaskHistoryDatabase
 from agent_core.stream_collector import ConsoleLogCollector
 from agent_core.provider_failover import (
     construct_agent_llm,
@@ -47,6 +48,27 @@ async def get_keys_action(incoming_call):
         "openai": ConfigRegistry.lookup_secret("OPENAI_API_KEY") or "",
         "anthropic": ConfigRegistry.lookup_secret("ANTHROPIC_API_KEY") or "",
     })
+
+
+async def get_task_history_action(incoming_call):
+    try:
+        history_records = TaskHistoryDatabase.get_recent_tasks(limit=10)
+        return JSONResponse({"history": history_records})
+    except Exception as caught_fault:
+        return JSONResponse({"error": str(caught_fault), "history": []}, status_code=500)
+
+
+async def record_task_history_action(incoming_call):
+    try:
+        payload_dict = await incoming_call.json()
+        task_str = payload_dict.get("task", "").strip()
+        is_success = bool(payload_dict.get("succeeded", False))
+        if task_str:
+            TaskHistoryDatabase.record_task(task_str, is_success)
+        history_records = TaskHistoryDatabase.get_recent_tasks(limit=10)
+        return JSONResponse({"success": True, "history": history_records})
+    except Exception as caught_fault:
+        return JSONResponse({"error": str(caught_fault)}, status_code=500)
 
 
 async def test_key_action(incoming_call):
@@ -235,9 +257,18 @@ async def browser_agent_stream(incoming_call):
             loop_outcome = await async_worker
             extracted_text, is_healthy = manager_handle.extract_task_conclusion(loop_outcome)
 
+            try:
+                TaskHistoryDatabase.record_task(goal_directive, is_healthy)
+            except Exception as history_fault:
+                service_logger.warning(f"Could not record history: {history_fault}")
+
             yield f"data: {json.dumps({'type': 'result', 'text': extracted_text, 'success': is_healthy, 'is_api_limit': not is_healthy and bool(analyze_provider_exception(extracted_text))})}\n\n"
 
         except Exception as caught_fault:
+            try:
+                TaskHistoryDatabase.record_task(goal_directive, False)
+            except Exception:
+                pass
             fault_diagnostic = analyze_provider_exception(caught_fault)
             if fault_diagnostic:
                 yield f"data: {json.dumps({'type': 'api_limit', 'is_api_limit': True, 'api_name': fault_diagnostic['provider_title'], 'limit_type': fault_diagnostic['category'], 'text': str(caught_fault)})}\n\n"
@@ -277,6 +308,8 @@ def build_server_app() -> Starlette:
         Route("/api/run", browser_agent_stream, methods=["GET"]),
         Route("/api/chat", dialogue_turn_action, methods=["POST"]),
         Route("/api/keys", get_keys_action, methods=["GET"]),
+        Route("/api/history", get_task_history_action, methods=["GET"]),
+        Route("/api/history", record_task_history_action, methods=["POST"]),
         Route("/api/test-key", test_key_action, methods=["POST"]),
         Route("/api/save-key", save_token_action, methods=["POST"]),
         Route("/api/set-key", save_token_action, methods=["POST"]),

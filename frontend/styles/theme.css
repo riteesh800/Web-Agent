@@ -956,3 +956,103 @@ textarea:focus {
     padding: 0 1.5rem;
 }
 .btn-send:hover { background: var(--accent-violet-hover); }
+
+/* Recent Tasks History Panel (Latest 10) */
+.history-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    background: #0f172a;
+    border: 1px solid rgba(51, 65, 85, 0.6);
+    border-radius: 10px;
+    padding: 0.6rem 0.85rem;
+    margin-top: -0.25rem;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+}
+
+.history-title {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.history-hint {
+    color: #64748b;
+    font-size: 0.72rem;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 185px;
+    overflow-y: auto;
+}
+
+.history-item-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.4rem 0.65rem;
+    background: #131d31;
+    border: 1px solid rgba(51, 65, 85, 0.4);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.history-item-row:hover {
+    background: #1e293b;
+    border-color: #38bdf8;
+    transform: translateX(2px);
+}
+
+.history-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 9999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.history-status-badge.status-succeeded {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.history-status-badge.status-failed {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.history-task-text {
+    flex: 1;
+    font-size: 0.85rem;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+}
+
+.history-empty-memo {
+    font-size: 0.8rem;
+    color: #64748b;
+    font-style: italic;
+    padding: 0.25rem 0;
+}

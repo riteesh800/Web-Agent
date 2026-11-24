@@ -3,6 +3,71 @@ let retainedResearchOutput = '';
 let conversationHistoryRecords = [];
 let activeLiveStreamConnection = null;
 
+async function fetchTaskHistory() {
+    try {
+        const response = await fetch('/api/history');
+        if (!response.ok) return;
+        const data = await response.json();
+        renderTaskHistory(data.history || []);
+    } catch (err) {
+        console.warn('Failed to load task history:', err);
+    }
+}
+
+function renderTaskHistory(historyItems) {
+    const container = document.getElementById('taskHistoryContainer');
+    const list = document.getElementById('taskHistoryList');
+    if (!container || !list) return;
+
+    if (!historyItems || historyItems.length === 0) {
+        container.style.display = 'none';
+        list.innerHTML = '';
+        return;
+    }
+
+    container.style.display = 'flex';
+    list.innerHTML = '';
+
+    historyItems.slice(0, 10).forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'history-item-row';
+        row.title = `Click to load: "${item.task}"`;
+
+        const badge = document.createElement('span');
+        badge.className = `history-status-badge ${item.succeeded ? 'status-succeeded' : 'status-failed'}`;
+        badge.textContent = item.succeeded ? '✔ Succeeded' : '✕ Failed';
+
+        const taskSpan = document.createElement('span');
+        taskSpan.className = 'history-task-text';
+        // Show first few words in one line: replace any newlines with space
+        taskSpan.textContent = item.task.replace(/[\r\n]+/g, ' ').trim();
+
+        row.appendChild(badge);
+        row.appendChild(taskSpan);
+
+        row.addEventListener('click', () => {
+            loadHistoryTask(item.task);
+        });
+
+        list.appendChild(row);
+    });
+}
+
+function loadHistoryTask(taskText) {
+    if (!taskText) return;
+    const directiveInput = document.getElementById('taskDirectiveInputBox');
+    const chatInput = document.getElementById('chatQueryInputBox');
+
+    if (directiveInput) {
+        directiveInput.value = taskText;
+        directiveInput.focus();
+        directiveInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    if (chatInput) {
+        chatInput.value = taskText;
+    }
+}
+
 let cachedEnvKeys = {
     openrouter: '',
     gemini: '',
@@ -347,6 +412,7 @@ function triggerBrowserWorkflow() {
                 activeLiveStreamConnection = null;
                 triggerTaskButton.disabled = false;
                 triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
+                fetchTaskHistory();
             }
         } catch (parseFault) {
             appendLogItem(`Stream parsing notice: ${eventPacket.data}`);
@@ -361,6 +427,7 @@ function triggerBrowserWorkflow() {
         }
         triggerTaskButton.disabled = false;
         triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
+        fetchTaskHistory();
     };
 }
 
@@ -492,6 +559,7 @@ async function sendUserQuery() {
 
 document.addEventListener('DOMContentLoaded', () => {
     fetchEnvKeys();
+    fetchTaskHistory();
 
     document.addEventListener('keydown', (keyboardEvent) => {
         if (keyboardEvent.key === 'Escape') {

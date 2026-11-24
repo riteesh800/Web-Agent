@@ -15,11 +15,13 @@ def execute_all_verifications():
     from qa_suite.test_fault_detection import TestFaultDetection
     from qa_suite.test_failover_engine import TestFailoverEngine
     from qa_suite.test_http_gateway import TestHttpGateway
+    from qa_suite.test_history import TestTaskHistory
 
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestSettingsValidation))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestFaultDetection))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestFailoverEngine))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestHttpGateway))
+    suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestTaskHistory))
 
     runner_engine = unittest.TextTestRunner(verbosity=2)
     suite_summary = runner_engine.run(suite_collector)

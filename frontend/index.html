@@ -108,6 +108,17 @@
                 </label>
                 <textarea id="taskDirectiveInputBox" placeholder="Example: Navigate to amazon.com, search for gaming laptops, and summarize the top 3 with pricing..."></textarea>
 
+                <!-- Recent Task History (Latest 10) -->
+                <div class="history-container" id="taskHistoryContainer" style="display:none;">
+                    <div class="history-header">
+                        <span class="history-title">🕒 Recent Tasks (Latest 10)</span>
+                        <span class="history-hint">Click task to reuse</span>
+                    </div>
+                    <div class="history-list" id="taskHistoryList">
+                        <!-- Loaded dynamically -->
+                    </div>
+                </div>
+
                 <div class="chip-row">
                     <span class="chip-title">Quick Tasks:</span>
                     <button class="chip" onclick="insertPresetTask('do web research and tell me top three latest AI news')">⚡ Top 3 AI News</button>

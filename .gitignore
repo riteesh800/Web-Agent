@@ -2,6 +2,8 @@
 .env
 *.env
 agent_secrets.env
+*.db
+task_history.db
 
 # Documentation (sensitive)
 API.docx
