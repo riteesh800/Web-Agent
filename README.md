@@ -54,7 +54,8 @@ A full-stack web application that combines **autonomous browser automation** (vi
 
 1. **Install dependencies**
    ```bash
-   pip install -r dependencies.txt
+   pip install -r requirements.txt
+   playwright install
    ```
 
 2. **Configure API keys** — Add your keys to `agent_secrets.env`:
