@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Agent - Autonomous Browser & AI Assistant</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles/theme.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="app-layout">
+        <header class="app-header">
+            <div class="brand-group">
+                <img id="appBrandingLogo" src="/media/brand_mark.png" alt="Logo" class="brand-img" onerror="this.style.display='none'; document.getElementById('backupVisualEmblem').style.display='inline-block';">
+                <span id="backupVisualEmblem" class="brand-emoji" style="display:none;">🌐</span>
+                <div class="brand-info">
+                    <h1>Web Agent</h1>
+                    <p>Autonomous Edge Browser Navigation & Multi-Engine AI</p>
+                </div>
+            </div>
+            <div class="status-pills">
+                <div class="pill pill-edge">
+                    <span>✔</span> Microsoft Edge
+                </div>
+                <div class="pill pill-multi">
+                    <span>⚡</span> Tri-Engine (OpenRouter ➔ Gemini ➔ Groq)
+                </div>
+            </div>
+        </header>
+
+        <section class="card setup-card" id="tokenManagerSection">
+            <div class="setup-header">
+                <div>
+                    <strong class="setup-title">🔑 API Key Configuration</strong>
+                    <span class="setup-desc">Primary Chat uses OpenRouter Free. Edge Browser Agent uses Gemini & Groq fallback:</span>
+                </div>
+                <div class="token-links">
+                    <a href="https://openrouter.ai/keys" target="_blank" class="link-openrouter">🌐 OpenRouter Key</a>
+                    <a href="https://console.groq.com/keys" target="_blank" class="link-groq">⚡ Groq Key (Free)</a>
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" class="link-gemini">✨ Gemini Key</a>
+                </div>
+            </div>
+            <div class="setup-input-row">
+                <input type="password" id="secretInputField" placeholder="Paste OpenRouter (sk-or-v1-...), Groq (gsk_...), or Gemini (AQ./AIzaSy...) key here">
+                <button id="saveSecretButton" class="btn btn-primary" onclick="storeSecretToken()">💾 Save Token</button>
+            </div>
+            <div id="statusFeedbackBox" class="setup-feedback" style="display:none;"></div>
+        </section>
+
+        <nav class="mode-navigation">
+            <button class="nav-button active" id="tabBrowserController" onclick="switchApplicationView('browser')">
+                <span>🌐 Browser Agent</span>
+                <span class="nav-badge badge-edge">Edge Automation</span>
+            </button>
+            <button class="nav-button" id="tabChatController" onclick="switchApplicationView('chat')">
+                <span>💬 AI Chatbot</span>
+                <span class="nav-badge badge-ai">Conversational AI</span>
+            </button>
+        </nav>
+
+        <main id="viewBrowserSection" class="view-panel">
+            <div class="card">
+                <label for="taskDirectiveInputBox" class="panel-label">
+                    <span>Enter Browsing & Research Directive</span>
+                    <span class="label-hint">What should Microsoft Edge do?</span>
+                </label>
+                <textarea id="taskDirectiveInputBox" placeholder="Example: Navigate to amazon.com, search for gaming laptops, and summarize the top 3 with pricing..."></textarea>
+
+                <div class="chip-row">
+                    <span class="chip-title">Quick Tasks:</span>
+                    <button class="chip" onclick="insertPresetTask('do web research and tell me top three latest AI news')">⚡ Top 3 AI News</button>
+                    <button class="chip" onclick="insertPresetTask('Go to amazon.com, search for smartphones, find the top 3 most expensive phones, and list their names and prices.')">🛒 Amazon Top 3 Phones</button>
+                    <button class="chip" onclick="insertPresetTask('Check current temperature and weather forecast for New York City')">🌤️ NYC Weather</button>
+                    <button class="chip" onclick="insertPresetTask('Go to wikipedia.org, search for Quantum Computing, and summarize its fundamental principles')">📚 Wikipedia Quantum Computing</button>
+                </div>
+
+                <div class="action-bar">
+                    <label class="toggle-option">
+                        <input type="checkbox" id="backgroundModeCheckbox">
+                        <span>Run Headless (Background)</span>
+                    </label>
+                    <div class="btn-group">
+                        <button id="startExecutionButton" class="btn btn-action" onclick="triggerBrowserWorkflow()">
+                            <span>▶ Run Task</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card terminal-card" id="liveTerminalCard" style="display:none;">
+                <div class="terminal-bar">
+                    <div class="terminal-heading">
+                        <div class="indicator-pulse"></div>
+                        <span>Live Browser Agent Logs</span>
+                    </div>
+                    <button class="btn btn-subtle" onclick="flushTerminalScreen()">Clear</button>
+                </div>
+                <div class="terminal-body" id="logsDisplaySection"></div>
+            </div>
+
+            <div class="card result-card" id="summaryDisplayCard" style="display:none;">
+                <div class="result-bar">
+                    <div class="result-heading" id="summaryStatusHeading">
+                        <span>✔</span> Task Completed
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-subtle" onclick="duplicateSummaryContent()">📋 Copy</button>
+                        <button class="btn btn-accent" id="askAiBridgeButton" onclick="routeFindingsToDialogue()">
+                            <span>💬 Ask AI Chatbot About This Result ➔</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="result-body markdown-surface" id="summaryContentContainer"></div>
+            </div>
+        </main>
+
+        <main id="viewChatSection" class="view-panel" style="display:none;">
+            <div class="card chat-card">
+                <div class="chat-bar">
+                    <div class="chat-heading">
+                        <span>💬 AI Research Assistant</span>
+                        <span class="chat-sub">Powered by OpenRouter with Gemini & Groq fallback</span>
+                    </div>
+                    <button class="btn btn-subtle" onclick="resetDialogueHistory()">Clear Chat</button>
+                </div>
+
+                <div class="context-banner" id="researchMemoryBanner" style="display:none;">
+                    <div class="context-bar">
+                        <div class="context-title">
+                            <span>🌐</span>
+                            <span>Browser Research Context Active</span>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-subtle" onclick="toggleMemoryPanel()" id="btnToggleMemory">▲ Collapse</button>
+                            <button class="btn btn-subtle" onclick="duplicateContextToClipboard()">📋 Copy</button>
+                            <button class="btn btn-danger-subtle" onclick="clearContextMemory()">✕ Remove</button>
+                        </div>
+                    </div>
+                    <div class="context-preview markdown-surface" id="findingsSnippetBody"></div>
+                    <div class="context-tip">
+                        <span>💡</span>
+                        <span>Assistant has this web research in memory. Ask any specific question without repeating details!</span>
+                    </div>
+                </div>
+
+                <div class="dialogue-thread" id="chatThreadDisplay">
+                    <div class="message-row row-ai">
+                        <div class="avatar avatar-ai">✨</div>
+                        <div class="bubble bubble-ai">
+                            <strong>Hello! I am your AI Assistant.</strong><br>
+                            You can ask me anything — analyze browsing research, explain concepts, write code, or draft summaries!
+                        </div>
+                    </div>
+                </div>
+
+                <div class="thinking-spinner" id="thinkingIndicatorBox" style="display:none;">
+                    <div class="spinner"></div>
+                    <span>AI is reasoning...</span>
+                </div>
+
+                <div class="chip-row" id="chatQuickPrompts">
+                    <span class="chip-title">Try Asking:</span>
+                    <button class="chip" onclick="dispatchPresetChatQuestion('Explain Quantum Computing in simple terms with real-world analogies.')">⚛️ Explain Quantum Computing</button>
+                    <button class="chip" onclick="dispatchPresetChatQuestion('Write a clean Python script using asyncio and aiohttp to fetch a web page.')">🐍 Python Asyncio Example</button>
+                    <button class="chip" onclick="dispatchPresetChatQuestion('What are the top 3 high-impact AI technology trends in 2026?')">📈 2026 AI Trends</button>
+                    <button class="chip" onclick="dispatchPresetChatQuestion('Give me 5 creative ideas for an engineering college AI project.')">💡 Project Ideas</button>
+                </div>
+
+                <div class="dialogue-input-row">
+                    <textarea id="chatQueryInputBox" placeholder="Ask AI anything... (Press Enter to send, Shift+Enter for newline)"></textarea>
+                    <button id="dispatchQueryButton" class="btn btn-send" onclick="sendUserQuery()">
+                        <span>Send ✨</span>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/scripts/orchestrator_ui.js"></script>
+</body>
+</html>

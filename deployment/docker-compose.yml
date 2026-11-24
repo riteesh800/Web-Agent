@@ -1,0 +1,11 @@
+services:
+  agent-hub:
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
+    container_name: web_agent_hub
+    ports:
+      - "5000:5000"
+    env_file:
+      - ../agent_secrets.env
+    restart: unless-stopped

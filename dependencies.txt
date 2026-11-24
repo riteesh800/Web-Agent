@@ -1,0 +1,8 @@
+browser-use>=1.0.8
+starlette>=0.40.0
+uvicorn>=0.30.0
+openai>=1.40.0
+google-genai>=0.1.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+pydantic-ai-slim>=0.0.1
