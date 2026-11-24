@@ -383,7 +383,7 @@ function triggerBrowserWorkflow() {
         activeLiveStreamConnection.close();
     }
 
-    const connectionUrl = `/api/run?task=${encodeURIComponent(directiveQuery)}&headless=${isBackground}`;
+    const connectionUrl = `/api/run?task=${encodeURIComponent(directiveQuery)}&background_mode=${isBackground}&headless=${isBackground}`;
     activeLiveStreamConnection = new EventSource(connectionUrl);
 
     activeLiveStreamConnection.onmessage = (eventPacket) => {

@@ -198,7 +198,10 @@ async def dialogue_turn_action(incoming_call):
 
 async def browser_agent_stream(incoming_call):
     goal_directive = incoming_call.query_params.get("task", "").strip()
-    is_background = incoming_call.query_params.get("headless", "false").lower() == "true"
+    is_background = (
+        incoming_call.query_params.get("background_mode")
+        or incoming_call.query_params.get("headless", "false")
+    ).lower() == "true"
 
     if not goal_directive:
         async def _missing_goal_stream():
