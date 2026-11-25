@@ -657,20 +657,21 @@ textarea:focus {
 }
 
 .btn-stop {
-    background: var(--accent-rose);
-    color: white;
+    background: #ef4444;
+    color: #ffffff;
     font-size: 1rem;
     padding: 0.65rem 1.35rem;
-    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.28);
+    border: 1px solid #f87171;
+    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.35);
 }
 .btn-stop:hover:not(:disabled) {
     background: #dc2626;
-    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.42);
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.5);
 }
 .btn-stop:disabled {
-    background: rgba(239, 68, 68, 0.18);
-    color: rgba(248, 250, 252, 0.42);
-    border: 1px solid rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.28);
+    color: #fca5a5;
+    border: 1px solid rgba(248, 113, 113, 0.55);
     box-shadow: none;
     cursor: not-allowed;
 }
