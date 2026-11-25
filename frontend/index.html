@@ -6,7 +6,7 @@
     <title>Web Agent - Autonomous Browser & AI Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles/theme.css?v=5">
+    <link rel="stylesheet" href="/static/styles/theme.css?v=6">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
@@ -153,13 +153,14 @@
                         <span class="open-browser-notice-title">🔐 Laptop Microsoft Edge Mode (Logged-In Accounts &amp; Gmail)</span>
                         <div class="open-browser-status-group">
                             <span id="openBrowserStatusBadge" class="open-browser-status-badge status-pending">Checking Microsoft Edge...</span>
-                            <button type="button" id="btnOpenEdgeInspect" class="btn btn-edge-setup" onclick="openEdgeInspectSetup()" style="display:none;">🔧 Open Edge Setup</button>
+                            <button type="button" id="btnCopyEdgeInspect" class="btn btn-edge-setup" onclick="copyEdgeInspectUrl()" style="display:none;">📋 Copy edge://inspect/#remote-debugging</button>
                             <button type="button" class="btn btn-subtle" onclick="refreshOpenBrowserStatus()">↻ Check</button>
                         </div>
                     </div>
                     <p id="openBrowserInstructions" class="open-browser-notice-text">
                         Uses your laptop's normal <strong>Microsoft Edge</strong> (with your already logged-in Gmail accounts).
-                        If not yet enabled, click <strong>Open Edge Setup</strong> (or visit <code>edge://inspect/#remote-debugging</code> in Edge),
+                        Because Edge prevents apps from opening internal <code>edge://</code> pages directly:
+                        click <strong>📋 Copy</strong>, open a new tab (<code>Ctrl+T</code>), paste <code>edge://inspect/#remote-debugging</code> in the address bar,
                         tick <strong>Allow remote debugging for this browser instance</strong>, and click <strong>Allow</strong> when prompted.
                     </p>
                 </div>
@@ -275,6 +276,6 @@
         </main>
     </div>
 
-    <script src="/static/scripts/orchestrator_ui.js?v=5"></script>
+    <script src="/static/scripts/orchestrator_ui.js?v=6"></script>
 </body>
 </html>

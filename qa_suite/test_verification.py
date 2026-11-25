@@ -192,20 +192,32 @@ class TestHumanVerificationFlow(unittest.TestCase):
                 self.assertEqual(resolve_edge_cdp_url(9333), "ws://127.0.0.1:9333/devtools/browser/abc-123")
                 self.assertEqual(resolve_edge_cdp_url(9222), "http://127.0.0.1:9222")
 
-    def test_ensure_edge_debugging_ready_opens_inspect_and_polls(self):
+    def test_ensure_edge_debugging_ready_launches_when_closed_with_toggle(self):
         async def _test():
-            statuses = []
             ports = iter([None, None, 9444])
-
+            statuses = []
             with (
                 patch("agent_core.navigation_driver.find_edge_devtools_port", side_effect=lambda: next(ports, 9444)),
-                patch("agent_core.navigation_driver.is_edge_running", return_value=True),
-                patch("agent_core.navigation_driver.open_edge_inspect_page", return_value=True) as mock_inspect,
+                patch("agent_core.navigation_driver.is_edge_running", return_value=False),
+                patch("agent_core.navigation_driver.has_edge_remote_debugging_toggle", return_value=True),
+                patch("agent_core.navigation_driver.launch_user_edge", return_value=True) as mock_launch,
             ):
                 port = await ensure_edge_debugging_ready(on_status=statuses.append, wait_timeout=2.0)
                 self.assertEqual(port, 9444)
-                mock_inspect.assert_called_once_with(False)
-                self.assertTrue(any("edge://inspect/#remote-debugging" in s for s in statuses))
+                mock_launch.assert_called_once_with()
+                self.assertTrue(any("Microsoft Edge" in s for s in statuses))
+
+        asyncio.run(_test())
+
+    def test_ensure_edge_debugging_ready_fails_fast_when_toggle_off(self):
+        async def _test():
+            with (
+                patch("agent_core.navigation_driver.find_edge_devtools_port", return_value=None),
+                patch("agent_core.navigation_driver.is_edge_running", return_value=True),
+            ):
+                with self.assertRaises(RuntimeError) as ctx:
+                    await ensure_edge_debugging_ready(wait_timeout=0.5)
+                self.assertIn("remote-debugging-setup", str(ctx.exception))
 
         asyncio.run(_test())
 

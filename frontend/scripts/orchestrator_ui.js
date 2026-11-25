@@ -380,7 +380,7 @@ function onOpenBrowserModeChanged() {
 
 async function refreshOpenBrowserStatus() {
     const badge = document.getElementById('openBrowserStatusBadge');
-    const setupBtn = document.getElementById('btnOpenEdgeInspect');
+    const copyBtn = document.getElementById('btnCopyEdgeInspect');
     const instructions = document.getElementById('openBrowserInstructions');
     if (!badge) return;
     badge.className = 'open-browser-status-badge status-pending';
@@ -393,17 +393,17 @@ async function refreshOpenBrowserStatus() {
         if (status.ambiguous) {
             badge.className = 'open-browser-status-badge status-warn';
             badge.textContent = `Multiple browsers ready (${(status.browsers || []).join(', ')})`;
-            if (setupBtn) setupBtn.style.display = 'none';
+            if (copyBtn) copyBtn.style.display = 'none';
             if (instructions) instructions.style.display = 'block';
         } else if (status.ready) {
             badge.className = 'open-browser-status-badge status-ready';
             badge.textContent = `✔ Ready: ${(status.browsers || ['Microsoft Edge']).join(', ')}`;
-            if (setupBtn) setupBtn.style.display = 'none';
+            if (copyBtn) copyBtn.style.display = 'none';
             if (instructions) instructions.style.display = 'none';
         } else {
             badge.className = 'open-browser-status-badge status-warn';
             badge.textContent = 'Needs remote debugging toggle in Microsoft Edge';
-            if (setupBtn) setupBtn.style.display = 'inline-flex';
+            if (copyBtn) copyBtn.style.display = 'inline-flex';
             if (instructions) instructions.style.display = 'block';
         }
     } catch (err) {
@@ -412,27 +412,47 @@ async function refreshOpenBrowserStatus() {
     }
 }
 
-async function openEdgeInspectSetup() {
-    const setupBtn = document.getElementById('btnOpenEdgeInspect');
+async function copyEdgeInspectUrl() {
+    const edgeUrl = 'edge://inspect/#remote-debugging';
+    const copyBtn = document.getElementById('btnCopyEdgeInspect');
     const badge = document.getElementById('openBrowserStatusBadge');
-    if (setupBtn) {
-        setupBtn.disabled = true;
-        setupBtn.textContent = '⏳ Opening...';
-    }
+    let copied = false;
+
     try {
-        const res = await fetch('/api/open-edge-inspect', { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (badge && res.ok && data.success) {
-            badge.className = 'open-browser-status-badge status-warn';
-            badge.textContent = 'Tick "Allow remote debugging" in Microsoft Edge tab, then click Check';
+        if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(edgeUrl);
+            copied = true;
         }
     } catch (err) {
-        console.warn('Could not open edge://inspect/#remote-debugging:', err);
-    } finally {
-        if (setupBtn) {
-            setupBtn.disabled = false;
-            setupBtn.textContent = '🔧 Open Edge Setup';
+        copied = false;
+    }
+
+    if (!copied && typeof document !== 'undefined' && document.body && document.execCommand) {
+        try {
+            const temp = document.createElement('textarea');
+            temp.value = edgeUrl;
+            temp.style.position = 'fixed';
+            temp.style.opacity = '0';
+            document.body.appendChild(temp);
+            temp.select();
+            copied = document.execCommand('copy');
+            document.body.removeChild(temp);
+        } catch (err) {
+            copied = false;
         }
+    }
+
+    if (copyBtn) {
+        copyBtn.textContent = copied ? '✔ Copied! Paste in a new Edge tab' : 'edge://inspect/#remote-debugging';
+        setTimeout(() => {
+            copyBtn.textContent = '📋 Copy edge://inspect/#remote-debugging';
+        }, 3500);
+    }
+    if (badge) {
+        badge.className = 'open-browser-status-badge status-warn';
+        badge.textContent = copied
+            ? 'Copied! Press Ctrl+T in Edge, paste, press Enter & tick Allow'
+            : 'Open Ctrl+T in Edge and type edge://inspect/#remote-debugging';
     }
 }
 

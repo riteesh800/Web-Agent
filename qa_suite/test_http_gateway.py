@@ -194,7 +194,7 @@ class TestHttpGateway(unittest.TestCase):
         self.assertEqual(index_resp.status_code, 200)
         self.assertIn('id="useOpenBrowserCheckbox" checked', index_resp.text)
         self.assertIn('id="openBrowserSetupNotice"', index_resp.text)
-        self.assertIn('id="btnOpenEdgeInspect"', index_resp.text)
+        self.assertIn('id="btnCopyEdgeInspect"', index_resp.text)
 
         node_bin = shutil.which("node")
         if not node_bin:
@@ -232,7 +232,7 @@ function createElement(id) {
 const elements = {};
 for (const id of [
     'taskDirectiveInputBox', 'backgroundModeCheckbox', 'useOpenBrowserCheckbox',
-    'openBrowserSetupNotice', 'openBrowserStatusBadge', 'btnOpenEdgeInspect',
+    'openBrowserSetupNotice', 'openBrowserStatusBadge', 'btnCopyEdgeInspect',
     'openBrowserInstructions', 'startExecutionButton',
     'stopExecutionButton', 'liveTerminalCard', 'summaryDisplayCard',
     'summaryContentContainer', 'summaryStatusHeading', 'humanVerificationCard',
@@ -278,7 +278,7 @@ vm.runInNewContext(source, sandbox);
     assert.strictEqual(elements.backgroundModeCheckbox.disabled, true);
     assert.strictEqual(elements.openBrowserSetupNotice.style.display, 'flex');
     assert.ok(elements.openBrowserStatusBadge.textContent.includes('Microsoft Edge'));
-    assert.strictEqual(elements.btnOpenEdgeInspect.style.display, 'none');
+    assert.strictEqual(elements.btnCopyEdgeInspect.style.display, 'none');
     assert.strictEqual(elements.openBrowserInstructions.style.display, 'none');
 
     elements.taskDirectiveInputBox.value = 'Open Gmail';

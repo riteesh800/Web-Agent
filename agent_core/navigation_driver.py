@@ -393,7 +393,7 @@ def open_edge_inspect_page(force: bool = False) -> bool:
 async def ensure_edge_debugging_ready(
     on_status: Optional[Callable[[str], None]] = None,
     stop_event: Optional[asyncio.Event] = None,
-    wait_timeout: float = 60.0,
+    wait_timeout: float = 10.0,
 ) -> int:
     """Ensure Microsoft Edge is running with remote debugging active and return its DevTools port."""
     existing_port = find_edge_devtools_port()
@@ -415,31 +415,24 @@ async def ensure_edge_debugging_ready(
             found = find_edge_devtools_port()
             if found is not None:
                 return found
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.35)
         return find_edge_devtools_port()
+
+    if stop_event is not None and stop_event.is_set():
+        raise asyncio.CancelledError()
 
     if not is_edge_running():
         _emit("Launching your laptop Microsoft Edge browser...")
         await asyncio.to_thread(launch_user_edge)
-        boot_wait = 10.0 if has_edge_remote_debugging_toggle() is True else 4.0
-        boot_port = await _poll_for_port(boot_wait)
-        if boot_port is not None:
-            return boot_port
-
-    _emit(
-        "Opening edge://inspect/#remote-debugging in your Microsoft Edge — please tick "
-        "'Allow remote debugging for this browser instance' to connect your logged-in profile..."
-    )
-    await asyncio.to_thread(open_edge_inspect_page, False)
-
-    ready_port = await _poll_for_port(wait_timeout)
-    if ready_port is not None:
-        _emit("✔ Microsoft Edge remote debugging detected. Connecting to your Edge session...")
-        return ready_port
+        if has_edge_remote_debugging_toggle() is True:
+            boot_port = await _poll_for_port(wait_timeout)
+            if boot_port is not None:
+                return boot_port
 
     raise RuntimeError(
         "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge. "
-        "Please tick 'Allow remote debugging for this browser instance' in the edge://inspect/#remote-debugging tab."
+        "Open edge://inspect/#remote-debugging in Microsoft Edge and tick "
+        "'Allow remote debugging for this browser instance'."
     )
 
 
@@ -485,11 +478,11 @@ def format_browser_connection_guidance(error: Any) -> Optional[str]:
         )
     ):
         return (
-            "Open-browser attachment needs remote debugging enabled in Microsoft Edge (one-time per browser session):\n"
-            "1. Open Microsoft Edge normally and sign into Gmail or your sites there.\n"
-            "2. Visit edge://inspect/#remote-debugging in Microsoft Edge.\n"
+            "Microsoft Edge remote debugging is not enabled yet (one-time setup; Edge blocks apps from toggling it automatically):\n"
+            "1. Open a new tab in your Microsoft Edge (Ctrl+T).\n"
+            "2. Paste  edge://inspect/#remote-debugging  into the address bar and press Enter (use the '📋 Copy' button above).\n"
             "3. Tick 'Allow remote debugging for this browser instance'.\n"
-            "4. Run your task again and click 'Allow' on Microsoft Edge's permission prompt."
+            "4. Come back here, click '▶ Run Task', and click 'Allow' on Microsoft Edge's permission prompt."
         )
 
     if any(
