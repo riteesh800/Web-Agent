@@ -35,7 +35,11 @@ async def render_main_interface(incoming_call):
     index_document = ConfigRegistry.ui_directory / "index.html"
     if not index_document.exists():
         return HTMLResponse("<h3>Web Frontend not found.</h3>", status_code=404)
-    return FileResponse(index_document, media_type="text/html")
+    return FileResponse(
+        index_document,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
 
 
 async def serve_brand_mark(incoming_call):
@@ -59,7 +63,10 @@ async def get_keys_action(incoming_call):
 async def get_task_history_action(incoming_call):
     try:
         history_records = TaskHistoryDatabase.get_recent_tasks(limit=10)
-        return JSONResponse({"history": history_records})
+        return JSONResponse(
+            {"history": history_records},
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+        )
     except Exception as caught_fault:
         return JSONResponse({"error": str(caught_fault), "history": []}, status_code=500)
 

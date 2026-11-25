@@ -1,8 +1,11 @@
+import contextlib
 import shutil
 import subprocess
+import tempfile
 import unittest
 import os
 import sys
+from pathlib import Path
 from starlette.testclient import TestClient
 
 suite_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,10 +18,36 @@ from backend.gateway import build_server_app
 
 class TestTaskHistory(unittest.TestCase):
     def setUp(self):
+        self._original_db_path = TaskHistoryDatabase.DB_PATH
+        self._temp_dir = tempfile.TemporaryDirectory()
+        TaskHistoryDatabase.DB_PATH = Path(self._temp_dir.name) / "test_task_history.db"
         TaskHistoryDatabase.clear_all()
 
     def tearDown(self):
-        TaskHistoryDatabase.clear_all()
+        TaskHistoryDatabase.DB_PATH = self._original_db_path
+        self._temp_dir.cleanup()
+
+    def test_persists_latest_10_across_restarts(self):
+        for idx in range(1, 13):
+            TaskHistoryDatabase.record_task(f"Persisted question #{idx}", idx % 2 == 1)
+
+        # Simulate process restart by spawning a separate Python process reading the same DB_PATH
+        db_path_str = str(TaskHistoryDatabase.DB_PATH)
+        probe_script = (
+            "import json, sys; "
+            "from pathlib import Path; "
+            f"sys.path.insert(0, {suite_directory!r}); "
+            "from core_config.history_db import TaskHistoryDatabase; "
+            f"TaskHistoryDatabase.DB_PATH = Path({db_path_str!r}); "
+            "print(json.dumps(TaskHistoryDatabase.get_recent_tasks(limit=10)))"
+        )
+        proc = subprocess.run([sys.executable, "-c", probe_script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        import json
+        reloaded = json.loads(proc.stdout)
+        self.assertEqual(len(reloaded), 10)
+        self.assertEqual(reloaded[0]["task"], "Persisted question #12")
+        self.assertEqual(reloaded[-1]["task"], "Persisted question #3")
 
     def test_record_and_fetch_recent_tasks(self):
         TaskHistoryDatabase.record_task("Find top 3 laptops on amazon", True)
@@ -45,7 +74,7 @@ class TestTaskHistory(unittest.TestCase):
         self.assertEqual(recent[-1]["task"], "Task Directive #6")
 
         # Verify directly in SQLite that earlier tasks 1 to 5 are permanently deleted
-        with TaskHistoryDatabase._get_connection() as conn:
+        with contextlib.closing(TaskHistoryDatabase._get_connection()) as conn:
             total_count = conn.execute("SELECT COUNT(*) FROM task_history").fetchone()[0]
             self.assertEqual(total_count, 10)
 

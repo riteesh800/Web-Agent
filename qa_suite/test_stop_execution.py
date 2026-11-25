@@ -3,7 +3,9 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.testclient import TestClient
 
@@ -16,17 +18,23 @@ from agent_core.navigation_driver import (
     HumanVerificationCoordinator,
     TaskExecutionCoordinator,
 )
+from core_config.history_db import TaskHistoryDatabase
 from backend.gateway import build_server_app
 
 
 class TestStopExecution(unittest.TestCase):
     def setUp(self):
+        self._original_db_path = TaskHistoryDatabase.DB_PATH
+        self._temp_dir = tempfile.TemporaryDirectory()
+        TaskHistoryDatabase.DB_PATH = Path(self._temp_dir.name) / "test_stop_history.db"
         TaskExecutionCoordinator.get_coordinator().reset()
         HumanVerificationCoordinator.get_coordinator().reset()
 
     def tearDown(self):
         TaskExecutionCoordinator.get_coordinator().reset()
         HumanVerificationCoordinator.get_coordinator().reset()
+        TaskHistoryDatabase.DB_PATH = self._original_db_path
+        self._temp_dir.cleanup()
 
     def test_stop_endpoint_when_idle(self):
         client = TestClient(build_server_app())

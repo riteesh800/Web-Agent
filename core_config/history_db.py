@@ -1,3 +1,4 @@
+import contextlib
 import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any
@@ -9,22 +10,24 @@ class TaskHistoryDatabase:
 
     @classmethod
     def _get_connection(cls) -> sqlite3.Connection:
+        cls.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(cls.DB_PATH), timeout=5.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA synchronous=FULL")
         return conn
 
     @classmethod
     def initialize(cls):
-        with cls._get_connection() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS task_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    task TEXT NOT NULL,
-                    succeeded BOOLEAN NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.commit()
+        with contextlib.closing(cls._get_connection()) as conn:
+            with conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS task_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        task TEXT NOT NULL,
+                        succeeded BOOLEAN NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
 
     @classmethod
     def record_task(cls, task_text: str, succeeded: bool):
@@ -32,24 +35,24 @@ class TaskHistoryDatabase:
         if not cleaned_task:
             return
         cls.initialize()
-        with cls._get_connection() as conn:
-            conn.execute(
-                "INSERT INTO task_history (task, succeeded) VALUES (?, ?)",
-                (cleaned_task, 1 if succeeded else 0),
-            )
-            # Permanently forget any records beyond the latest 10
-            conn.execute("""
-                DELETE FROM task_history 
-                WHERE id NOT IN (
-                    SELECT id FROM task_history ORDER BY id DESC LIMIT 10
+        with contextlib.closing(cls._get_connection()) as conn:
+            with conn:
+                conn.execute(
+                    "INSERT INTO task_history (task, succeeded) VALUES (?, ?)",
+                    (cleaned_task, 1 if succeeded else 0),
                 )
-            """)
-            conn.commit()
+                # Permanently forget any records beyond the latest 10
+                conn.execute("""
+                    DELETE FROM task_history 
+                    WHERE id NOT IN (
+                        SELECT id FROM task_history ORDER BY id DESC LIMIT 10
+                    )
+                """)
 
     @classmethod
     def get_recent_tasks(cls, limit: int = 10) -> List[Dict[str, Any]]:
         cls.initialize()
-        with cls._get_connection() as conn:
+        with contextlib.closing(cls._get_connection()) as conn:
             cursor = conn.execute(
                 "SELECT id, task, succeeded, created_at FROM task_history ORDER BY id DESC LIMIT ?",
                 (limit,),
@@ -68,6 +71,6 @@ class TaskHistoryDatabase:
     @classmethod
     def clear_all(cls):
         cls.initialize()
-        with cls._get_connection() as conn:
-            conn.execute("DELETE FROM task_history")
-            conn.commit()
+        with contextlib.closing(cls._get_connection()) as conn:
+            with conn:
+                conn.execute("DELETE FROM task_history")
