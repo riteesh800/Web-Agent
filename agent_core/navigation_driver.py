@@ -1,14 +1,21 @@
 import asyncio
+import json
 import os
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
+from urllib.parse import urlparse
 
 from browser_use import Agent, Browser, Controller
 from browser_use.agent.loop import last_text
 
 from .provider_failover import construct_agent_llm, analyze_provider_exception
+
+_LAST_INSPECT_OPEN_TS: float = 0.0
+_INSPECT_OPEN_COOLDOWN_S: float = 15.0
 
 BROWSER_SPEED_DIRECTIVES = (
     "HIGH-SPEED BROWSING & RESEARCH INSTRUCTIONS:\n"
@@ -28,14 +35,16 @@ BROWSER_SPEED_DIRECTIVES = (
     "     Once resumed, re-inspect the page DOM and proceed with the task.\n\n"
     "5. ACCOUNT SIGN-IN SECURITY REJECTIONS (E.G. GMAIL / GOOGLE):\n"
     "   - If Google Sign-In or any login portal shows 'Couldn't sign you in' / 'This browser or app may not be secure' "
-    "(e.g. accounts.google.com/v3/signin/rejected):\n"
+    "(e.g. accounts.google.com/v3/signin/rejected) OR shows an unexpected sign-in page for a task expecting an already logged-in account:\n"
     "     DO NOT repeatedly click 'Try again' or attempt workarounds.\n"
-    "     Stop immediately and report clearly that isolated automation mode is blocked by Google's browser-security check "
-    "(Chromium launched with --remote-debugging-port sets navigator.webdriver=true and starts with an empty temporary profile). "
-    "Instruct the user to enable 'Use Open Browser (Gmail / Logged-In Sites)' in the Web Agent UI, turn on remote debugging "
+    "     Stop immediately and report clearly that isolated automation mode does not share your Microsoft Edge logins and may be blocked by Google's browser-security check. "
+    "Instruct the user to keep 'Use Open Edge Browser (Gmail / Logged-In Sites)' checked in the Web Agent UI, enable remote debugging "
     "at edge://inspect/#remote-debugging in Microsoft Edge, and sign in normally there.\n\n"
-    "6. STRUCTURED REPORTING:\n"
-    "   - Conclude with a clean, bulleted Markdown synthesis including product names, links, and pricing."
+    "6. ATTACHED EDGE TAB SAFETY & GMAIL WORKFLOW:\n"
+    "   - Never close or navigate away from the Web Agent UI tab (127.0.0.1:5000 or localhost:5000); always work in a separate tab.\n"
+    "   - For Gmail / logged-in tasks, navigate to https://mail.google.com in your working tab. If multiple Gmail accounts are signed in, inspect/switch accounts as requested or clearly list which accounts/senders are visible if a specific sender was not named.\n\n"
+    "7. STRUCTURED REPORTING:\n"
+    "   - Conclude with a clean, bulleted Markdown synthesis including relevant summaries, names, links, and pricing as appropriate for the task."
 )
 
 
@@ -249,8 +258,8 @@ def get_edge_user_data_dirs() -> list[Path]:
     return dirs
 
 
-def find_edge_devtools_port() -> Optional[int]:
-    """Find the live DevTools port for Microsoft Edge if remote debugging is active."""
+def find_edge_devtools_endpoint() -> Optional[Tuple[int, Optional[str], Path]]:
+    """Find live Microsoft Edge DevTools endpoint (port, ws_path, user_data_dir) if remote debugging is active."""
     import socket
 
     for base in get_edge_user_data_dirs():
@@ -258,12 +267,180 @@ def find_edge_devtools_port() -> Optional[int]:
         if not port_file.is_file():
             continue
         try:
-            port = int(port_file.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip())
+            lines = port_file.read_text(encoding="utf-8", errors="replace").splitlines()
+            port = int(lines[0].strip())
+            ws_path = lines[1].strip() if len(lines) > 1 and lines[1].strip().startswith("/") else None
             with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return port
+                return port, ws_path, base
         except (OSError, ValueError, IndexError):
             continue
     return None
+
+
+def find_edge_devtools_port() -> Optional[int]:
+    """Find the live DevTools port for Microsoft Edge if remote debugging is active."""
+    endpoint = find_edge_devtools_endpoint()
+    return endpoint[0] if endpoint is not None else None
+
+
+def resolve_edge_cdp_url(port: int) -> str:
+    """Resolve the WebSocket CDP URL for Edge (modern Edge disables /json/version HTTP discovery on default dir)."""
+    endpoint = find_edge_devtools_endpoint()
+    if endpoint is not None and endpoint[0] == port and endpoint[1]:
+        return f"ws://127.0.0.1:{port}{endpoint[1]}"
+    return f"http://127.0.0.1:{port}"
+
+
+def _read_edge_local_state(base: Path) -> Dict[str, Any]:
+    """Read Microsoft Edge Local State JSON safely."""
+    try:
+        return json.loads((base / "Local State").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def get_edge_last_used_profile() -> Optional[str]:
+    """Return the last active profile directory name (e.g. 'Default' or 'Profile 1') for Microsoft Edge."""
+    for base in get_edge_user_data_dirs():
+        if not base.exists():
+            continue
+        state = _read_edge_local_state(base)
+        last = (state.get("profile") or {}).get("last_used")
+        if isinstance(last, str) and (base / last).is_dir():
+            return last
+        if (base / "Default").is_dir():
+            return "Default"
+    return None
+
+
+def has_edge_remote_debugging_toggle() -> Optional[bool]:
+    """Check whether Edge Local State records remote debugging user-enabled as True or False."""
+    seen: Optional[bool] = None
+    for base in get_edge_user_data_dirs():
+        if not base.exists():
+            continue
+        state = _read_edge_local_state(base)
+        enabled = ((state.get("devtools") or {}).get("remote_debugging") or {}).get("user-enabled")
+        if enabled is True:
+            return True
+        if enabled is False:
+            seen = False
+    return seen
+
+
+def is_edge_running() -> bool:
+    """Best-effort check whether Microsoft Edge is currently running."""
+    try:
+        if sys.platform == "win32":
+            out = subprocess.check_output(
+                ["tasklist", "/FI", "IMAGENAME eq msedge.exe"],
+                text=True,
+                errors="replace",
+                timeout=5,
+            )
+            return "msedge.exe" in out.lower()
+        elif sys.platform == "darwin":
+            proc = subprocess.run(
+                ["pgrep", "-f", "Microsoft Edge"],
+                capture_output=True,
+                timeout=5,
+            )
+            return proc.returncode == 0
+        else:
+            proc = subprocess.run(
+                ["pgrep", "-f", "microsoft-edge"],
+                capture_output=True,
+                timeout=5,
+            )
+            return proc.returncode == 0
+    except Exception:
+        return False
+
+
+def launch_user_edge(target_url: Optional[str] = None) -> bool:
+    """Launch or open a tab in the user's real laptop Microsoft Edge (never a temp isolated profile)."""
+    edge_executable = _find_edge_executable()
+    cmd = [edge_executable]
+    profile_dir = get_edge_last_used_profile()
+    if profile_dir:
+        cmd.append(f"--profile-directory={profile_dir}")
+    if target_url:
+        cmd.append(target_url)
+
+    creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
+    )
+    return True
+
+
+def open_edge_inspect_page(force: bool = False) -> bool:
+    """Open edge://inspect/#remote-debugging in the user's laptop Microsoft Edge."""
+    global _LAST_INSPECT_OPEN_TS
+    now = time.monotonic()
+    if not force and (now - _LAST_INSPECT_OPEN_TS) < _INSPECT_OPEN_COOLDOWN_S:
+        return False
+    launched = launch_user_edge("edge://inspect/#remote-debugging")
+    if launched:
+        _LAST_INSPECT_OPEN_TS = now
+    return launched
+
+
+async def ensure_edge_debugging_ready(
+    on_status: Optional[Callable[[str], None]] = None,
+    stop_event: Optional[asyncio.Event] = None,
+    wait_timeout: float = 60.0,
+) -> int:
+    """Ensure Microsoft Edge is running with remote debugging active and return its DevTools port."""
+    existing_port = find_edge_devtools_port()
+    if existing_port is not None:
+        return existing_port
+
+    def _emit(msg: str):
+        if on_status:
+            try:
+                on_status(msg)
+            except Exception:
+                pass
+
+    async def _poll_for_port(timeout_s: float) -> Optional[int]:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if stop_event is not None and stop_event.is_set():
+                raise asyncio.CancelledError()
+            found = find_edge_devtools_port()
+            if found is not None:
+                return found
+            await asyncio.sleep(0.4)
+        return find_edge_devtools_port()
+
+    if not is_edge_running():
+        _emit("Launching your laptop Microsoft Edge browser...")
+        await asyncio.to_thread(launch_user_edge)
+        boot_wait = 10.0 if has_edge_remote_debugging_toggle() is True else 4.0
+        boot_port = await _poll_for_port(boot_wait)
+        if boot_port is not None:
+            return boot_port
+
+    _emit(
+        "Opening edge://inspect/#remote-debugging in your Microsoft Edge — please tick "
+        "'Allow remote debugging for this browser instance' to connect your logged-in profile..."
+    )
+    await asyncio.to_thread(open_edge_inspect_page, False)
+
+    ready_port = await _poll_for_port(wait_timeout)
+    if ready_port is not None:
+        _emit("✔ Microsoft Edge remote debugging detected. Connecting to your Edge session...")
+        return ready_port
+
+    raise RuntimeError(
+        "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge. "
+        "Please tick 'Allow remote debugging for this browser instance' in the edge://inspect/#remote-debugging tab."
+    )
 
 
 def detect_open_browser_debugging() -> Dict[str, Any]:
@@ -277,6 +454,8 @@ def detect_open_browser_debugging() -> Dict[str, Any]:
             "browsers": ["Microsoft Edge"] if live_port is not None else [],
             "port": live_port,
             "dirs": edge_dirs,
+            "edge_running": is_edge_running(),
+            "toggle_enabled": has_edge_remote_debugging_toggle(),
         }
     except Exception as exc:
         return {
@@ -285,6 +464,8 @@ def detect_open_browser_debugging() -> Dict[str, Any]:
             "browsers": [],
             "port": None,
             "dirs": [],
+            "edge_running": False,
+            "toggle_enabled": None,
             "error": str(exc),
         }
 
@@ -311,7 +492,16 @@ def format_browser_connection_guidance(error: Any) -> Optional[str]:
             "4. Run your task again and click 'Allow' on Microsoft Edge's permission prompt."
         )
 
-    if "permission-blocked" in lower:
+    if any(
+        token in lower
+        for token in (
+            "permission-blocked",
+            "cdp ws handshake failed",
+            "opening handshake",
+            "http 403",
+            "status 403",
+        )
+    ):
         return (
             "Microsoft Edge did not approve the remote debugging connection (the 'Allow remote debugging?' prompt was dismissed, denied, or timed out). "
             "Run the task again and click 'Allow' when Microsoft Edge asks."
@@ -324,6 +514,88 @@ def format_browser_connection_guidance(error: Any) -> Optional[str]:
         )
 
     return None
+
+
+def _is_ui_tab_url(tab_url: str, ui_netloc: Optional[str] = None) -> bool:
+    """Return True if a browser tab URL points to the Web Agent frontend itself."""
+    if not tab_url:
+        return False
+    try:
+        parsed = urlparse(tab_url)
+    except ValueError:
+        return False
+    netloc = (parsed.netloc or "").lower()
+    if not netloc:
+        return False
+    if ui_netloc and netloc == ui_netloc.lower():
+        return True
+    return netloc in {"127.0.0.1:5000", "localhost:5000"}
+
+
+async def ensure_attached_working_tab(browser_session: Any, ui_netloc: Optional[str] = None) -> None:
+    """Ensure an attached Edge Browser session works in a dedicated visible tab, never hijacking the Web Agent UI tab."""
+    if getattr(browser_session, "kind", None) != "cdp":
+        return
+    start_fn = getattr(browser_session, "start", None)
+    daemon_name_fn = getattr(browser_session, "_daemon_name", None)
+    if not callable(start_fn) or not callable(daemon_name_fn):
+        return
+
+    await start_fn()
+
+    from browser_use.browser.browser import _daemon_cdp, _daemon_request
+
+    daemon_name = daemon_name_fn()
+    try:
+        current = await asyncio.to_thread(_daemon_request, daemon_name, {"meta": "current_tab"}, 5.0)
+    except Exception:
+        return
+
+    current_id = current.get("targetId") if isinstance(current, dict) else None
+    current_url = (current.get("url") or "") if isinstance(current, dict) else ""
+
+    if current_id and not _is_ui_tab_url(current_url, ui_netloc=ui_netloc):
+        try:
+            await asyncio.to_thread(_daemon_cdp, daemon_name, "Target.activateTarget", None, targetId=current_id)
+        except Exception:
+            pass
+        return
+
+    # _attach_open_page() attached to the Web Agent UI tab because it was the only open non-internal page.
+    # Open a fresh foreground tab in the same Edge window so the SSE stream and UI remain intact.
+    created = await asyncio.to_thread(
+        _daemon_cdp,
+        daemon_name,
+        "Target.createTarget",
+        None,
+        url="about:blank",
+        background=False,
+    )
+    new_tid = created.get("targetId") if isinstance(created, dict) else None
+    if not new_tid:
+        return
+
+    attached = await asyncio.to_thread(
+        _daemon_cdp,
+        daemon_name,
+        "Target.attachToTarget",
+        None,
+        targetId=new_tid,
+        flatten=True,
+    )
+    new_sid = attached.get("sessionId") if isinstance(attached, dict) else None
+    if new_sid:
+        await asyncio.to_thread(
+            _daemon_request,
+            daemon_name,
+            {"meta": "set_session", "session_id": new_sid, "target_id": new_tid},
+            5.0,
+        )
+        browser_session._agent_tab = new_tid
+        try:
+            await asyncio.to_thread(_daemon_cdp, daemon_name, "Target.activateTarget", None, targetId=new_tid)
+        except Exception:
+            pass
 
 
 class BrowserSessionManager:
@@ -343,12 +615,36 @@ class BrowserSessionManager:
         normalized_mode = normalize_browser_mode(browser_mode)
         target_kind = "cdp" if normalized_mode == "attached" else "chromium"
 
+        expected_cdp_url: Optional[str] = None
+        if target_kind == "cdp":
+            edge_port = find_edge_devtools_port()
+            if edge_port is None:
+                raise RuntimeError(
+                    "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge. "
+                    "Please open Microsoft Edge, navigate to edge://inspect/#remote-debugging, "
+                    "and tick 'Allow remote debugging for this browser instance'."
+                )
+            expected_cdp_url = resolve_edge_cdp_url(edge_port)
+
         if self.active_session is not None:
             session_kind = getattr(self.active_session, "kind", None)
             session_headless = getattr(self.active_session, "headless", None)
             needs_replace = session_kind != target_kind or (
                 target_kind == "chromium" and session_headless != background_operation
             )
+            if not needs_replace and target_kind == "cdp":
+                current_cdp_url = getattr(self.active_session, "cdp_url", None)
+                if current_cdp_url != expected_cdp_url:
+                    needs_replace = True
+                else:
+                    daemon_name = getattr(self.active_session, "name", None)
+                    if daemon_name:
+                        try:
+                            from browser_harness import admin
+                            if not admin.daemon_alive(daemon_name):
+                                needs_replace = True
+                        except Exception:
+                            needs_replace = True
             if needs_replace:
                 try:
                     await self.active_session.stop()
@@ -367,14 +663,8 @@ class BrowserSessionManager:
             )
         ):
             if target_kind == "cdp":
-                edge_port = find_edge_devtools_port()
-                if edge_port is None:
-                    raise RuntimeError(
-                        "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge. "
-                        "Please open Microsoft Edge, navigate to edge://inspect/#remote-debugging, "
-                        "and tick 'Allow remote debugging for this browser instance'."
-                    )
-                self.active_session = Browser(cdp_url=f"http://127.0.0.1:{edge_port}", keep_alive=True)
+                assert expected_cdp_url is not None
+                self.active_session = Browser(cdp_url=expected_cdp_url, keep_alive=True)
             else:
                 edge_executable = _find_edge_executable()
                 browser_kwargs: Dict[str, Any] = {

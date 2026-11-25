@@ -1,7 +1,9 @@
 import asyncio
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from starlette.testclient import TestClient
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,8 +16,13 @@ from agent_core.navigation_driver import (
     BrowserSessionManager,
     HumanVerificationCoordinator,
     build_verification_controller,
+    ensure_attached_working_tab,
+    ensure_edge_debugging_ready,
+    find_edge_devtools_endpoint,
+    find_edge_devtools_port,
     format_browser_connection_guidance,
     normalize_browser_mode,
+    resolve_edge_cdp_url,
 )
 from backend.gateway import build_server_app
 
@@ -156,11 +163,104 @@ class TestHumanVerificationFlow(unittest.TestCase):
         self.assertIsNotNone(perm_msg)
         self.assertIn("Allow", perm_msg)
 
+        ws_timeout_msg = format_browser_connection_guidance("CDP WS handshake failed: timed out during opening handshake")
+        self.assertIsNotNone(ws_timeout_msg)
+        self.assertIn("Allow", ws_timeout_msg)
+
         not_running = format_browser_connection_guidance("edge-not-running: no running microsoft edge")
         self.assertIsNotNone(not_running)
         self.assertIn("Microsoft Edge", not_running)
 
         self.assertIsNone(format_browser_connection_guidance("Some unrelated ValueError"))
+
+    def test_find_edge_devtools_endpoint_and_resolve_ws_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            edge_dir = Path(tmpdir)
+            (edge_dir / "DevToolsActivePort").write_text("9333\n/devtools/browser/abc-123\n", encoding="utf-8")
+
+            fake_conn = MagicMock()
+            fake_conn.__enter__.return_value = fake_conn
+            fake_conn.__exit__.return_value = False
+
+            with (
+                patch("agent_core.navigation_driver.get_edge_user_data_dirs", return_value=[edge_dir]),
+                patch("socket.create_connection", return_value=fake_conn),
+            ):
+                endpoint = find_edge_devtools_endpoint()
+                self.assertEqual(endpoint, (9333, "/devtools/browser/abc-123", edge_dir))
+                self.assertEqual(find_edge_devtools_port(), 9333)
+                self.assertEqual(resolve_edge_cdp_url(9333), "ws://127.0.0.1:9333/devtools/browser/abc-123")
+                self.assertEqual(resolve_edge_cdp_url(9222), "http://127.0.0.1:9222")
+
+    def test_ensure_edge_debugging_ready_opens_inspect_and_polls(self):
+        async def _test():
+            statuses = []
+            ports = iter([None, None, 9444])
+
+            with (
+                patch("agent_core.navigation_driver.find_edge_devtools_port", side_effect=lambda: next(ports, 9444)),
+                patch("agent_core.navigation_driver.is_edge_running", return_value=True),
+                patch("agent_core.navigation_driver.open_edge_inspect_page", return_value=True) as mock_inspect,
+            ):
+                port = await ensure_edge_debugging_ready(on_status=statuses.append, wait_timeout=2.0)
+                self.assertEqual(port, 9444)
+                mock_inspect.assert_called_once_with(False)
+                self.assertTrue(any("edge://inspect/#remote-debugging" in s for s in statuses))
+
+        asyncio.run(_test())
+
+    def test_ensure_edge_debugging_ready_cancels_on_stop_event(self):
+        async def _test():
+            stop_event = asyncio.Event()
+            stop_event.set()
+            with (
+                patch("agent_core.navigation_driver.find_edge_devtools_port", return_value=None),
+                patch("agent_core.navigation_driver.is_edge_running", return_value=True),
+                patch("agent_core.navigation_driver.open_edge_inspect_page", return_value=True),
+            ):
+                with self.assertRaises(asyncio.CancelledError):
+                    await ensure_edge_debugging_ready(stop_event=stop_event, wait_timeout=2.0)
+
+        asyncio.run(_test())
+
+    def test_ensure_attached_working_tab_protects_ui_tab(self):
+        async def _test():
+            fake_browser = MagicMock()
+            fake_browser.kind = "cdp"
+            fake_browser.start = AsyncMock()
+            fake_browser._daemon_name = MagicMock(return_value="bu1234")
+
+            cdp_calls = []
+            req_calls = []
+
+            def _fake_request(name, req, timeout=30):
+                req_calls.append((name, req))
+                if req.get("meta") == "current_tab":
+                    return {"targetId": "ui-tab-1", "url": "http://127.0.0.1:5000/"}
+                return {"session_id": "new-sid-2"}
+
+            def _fake_cdp(name, method, session_id=None, **params):
+                cdp_calls.append((method, params))
+                if method == "Target.createTarget":
+                    return {"targetId": "work-tab-2"}
+                if method == "Target.attachToTarget":
+                    return {"sessionId": "new-sid-2"}
+                return {}
+
+            with (
+                patch("browser_use.browser.browser._daemon_request", side_effect=_fake_request),
+                patch("browser_use.browser.browser._daemon_cdp", side_effect=_fake_cdp),
+            ):
+                await ensure_attached_working_tab(fake_browser, ui_netloc="127.0.0.1:5000")
+
+            fake_browser.start.assert_awaited_once()
+            self.assertEqual(fake_browser._agent_tab, "work-tab-2")
+            self.assertEqual(cdp_calls[0], ("Target.createTarget", {"url": "about:blank", "background": False}))
+            self.assertEqual(cdp_calls[1], ("Target.attachToTarget", {"targetId": "work-tab-2", "flatten": True}))
+            self.assertEqual(cdp_calls[2], ("Target.activateTarget", {"targetId": "work-tab-2"}))
+            self.assertEqual(req_calls[1], ("bu1234", {"meta": "set_session", "session_id": "new-sid-2", "target_id": "work-tab-2"}))
+
+        asyncio.run(_test())
 
     def test_extract_task_conclusion_formats_browser_connection_guidance(self):
         fake_result = MagicMock()

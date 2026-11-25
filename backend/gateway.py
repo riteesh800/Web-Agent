@@ -26,8 +26,11 @@ from agent_core.navigation_driver import (
     TaskExecutionCoordinator,
     build_verification_controller,
     detect_open_browser_debugging,
+    ensure_attached_working_tab,
+    ensure_edge_debugging_ready,
     format_browser_connection_guidance,
     normalize_browser_mode,
+    open_edge_inspect_page,
 )
 from browser_use import Agent
 
@@ -319,10 +322,20 @@ async def browser_agent_stream(incoming_call):
             async def _execute_pipeline():
                 llm_runtime = construct_agent_llm(on_status_change=_publish_status)
                 if browser_mode == "attached":
+                    await ensure_edge_debugging_ready(
+                        on_status=_publish_status,
+                        stop_event=stop_event,
+                    )
                     browser_handle = await manager_handle.acquire_session(
                         background_operation=False,
                         browser_mode="attached",
                     )
+                    if getattr(browser_handle, "kind", None) == "cdp" and not getattr(browser_handle, "_env", None):
+                        _publish_status(
+                            "Connecting to Microsoft Edge — click 'Allow' if Edge shows an 'Allow remote debugging?' prompt..."
+                        )
+                    ui_netloc = getattr(getattr(incoming_call, "url", None), "netloc", None)
+                    await ensure_attached_working_tab(browser_handle, ui_netloc=ui_netloc)
                 else:
                     browser_handle = await manager_handle.acquire_session(background_operation=effective_background)
                 verification_controller = build_verification_controller()
@@ -442,6 +455,20 @@ async def browser_status_action(incoming_call):
     )
 
 
+async def open_edge_inspect_action(incoming_call):
+    try:
+        opened = await asyncio.to_thread(open_edge_inspect_page, True)
+        return JSONResponse({
+            "success": bool(opened),
+            "message": (
+                "Opened edge://inspect/#remote-debugging in your Microsoft Edge. "
+                "Tick 'Allow remote debugging for this browser instance' there."
+            ),
+        })
+    except Exception as caught_fault:
+        return JSONResponse({"success": False, "error": str(caught_fault)}, status_code=500)
+
+
 async def system_readiness_check(incoming_call):
     ConfigRegistry.sync_environment()
     return JSONResponse({
@@ -474,6 +501,7 @@ def build_server_app() -> Starlette:
         Route("/api/set-key", save_token_action, methods=["POST"]),
         Route("/api/health", system_readiness_check, methods=["GET"]),
         Route("/api/browser-status", browser_status_action, methods=["GET"]),
+        Route("/api/open-edge-inspect", open_edge_inspect_action, methods=["POST"]),
         Mount("/static", StaticFiles(directory=str(static_assets_path)), name="static"),
     ]
     return Starlette(routes=configured_routes)

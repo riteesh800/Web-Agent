@@ -777,6 +777,22 @@ textarea:focus {
     color: var(--text-primary);
 }
 
+.btn-edge-setup {
+    background: rgba(2, 132, 199, 0.22);
+    border: 1px solid rgba(56, 189, 248, 0.55);
+    color: #7dd3fc;
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+}
+.btn-edge-setup:hover:not(:disabled) {
+    background: rgba(2, 132, 199, 0.36);
+    color: #f8fafc;
+}
+.btn-edge-setup:disabled {
+    opacity: 0.65;
+    cursor: wait;
+}
+
 .btn-danger-subtle {
     background: transparent;
     border: 1px solid rgba(248, 113, 113, 0.4);

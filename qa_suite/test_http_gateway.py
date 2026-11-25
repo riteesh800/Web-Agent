@@ -148,6 +148,7 @@ class TestHttpGateway(unittest.TestCase):
                 patch("backend.gateway.construct_agent_llm", return_value=MagicMock()),
                 patch("backend.gateway.Agent", FakeAgent),
                 patch("backend.gateway.TaskHistoryDatabase.record_task"),
+                patch("backend.gateway.ensure_edge_debugging_ready", return_value=9222) as mock_ready,
                 patch.object(manager, "acquire_session", side_effect=_fake_acquire),
             ):
                 from starlette.requests import Request
@@ -168,6 +169,7 @@ class TestHttpGateway(unittest.TestCase):
                         if line.startswith("data: "):
                             events.append(json.loads(line[6:]))
 
+                mock_ready.assert_awaited_once()
                 self.assertEqual(captured_calls, [(False, "attached")])
                 self.assertTrue(any("Attaching to your open Microsoft Edge browser session" in evt.get("text", "") for evt in events))
                 self.assertTrue(any(evt.get("type") == "result" and evt.get("success") for evt in events))
@@ -178,11 +180,21 @@ class TestHttpGateway(unittest.TestCase):
             manager.active_session = original_session
             manager.active_mode = original_mode
 
+    def test_open_edge_inspect_endpoint(self):
+        with patch("backend.gateway.open_edge_inspect_page", return_value=True) as mock_open:
+            resp = self.http_tester.post("/api/open-edge-inspect")
+            self.assertEqual(resp.status_code, 200)
+            payload = resp.json()
+            self.assertTrue(payload["success"])
+            self.assertIn("edge://inspect/#remote-debugging", payload["message"])
+            mock_open.assert_called_once_with(True)
+
     def test_frontend_open_browser_toggle_behavior(self):
         index_resp = self.http_tester.get("/")
         self.assertEqual(index_resp.status_code, 200)
-        self.assertIn('id="useOpenBrowserCheckbox"', index_resp.text)
+        self.assertIn('id="useOpenBrowserCheckbox" checked', index_resp.text)
         self.assertIn('id="openBrowserSetupNotice"', index_resp.text)
+        self.assertIn('id="btnOpenEdgeInspect"', index_resp.text)
 
         node_bin = shutil.which("node")
         if not node_bin:
@@ -220,7 +232,8 @@ function createElement(id) {
 const elements = {};
 for (const id of [
     'taskDirectiveInputBox', 'backgroundModeCheckbox', 'useOpenBrowserCheckbox',
-    'openBrowserSetupNotice', 'openBrowserStatusBadge', 'startExecutionButton',
+    'openBrowserSetupNotice', 'openBrowserStatusBadge', 'btnOpenEdgeInspect',
+    'openBrowserInstructions', 'startExecutionButton',
     'stopExecutionButton', 'liveTerminalCard', 'summaryDisplayCard',
     'summaryContentContainer', 'summaryStatusHeading', 'humanVerificationCard',
     'verificationPromptMessage', 'btnConfirmVerification', 'logsDisplaySection',
@@ -265,6 +278,8 @@ vm.runInNewContext(source, sandbox);
     assert.strictEqual(elements.backgroundModeCheckbox.disabled, true);
     assert.strictEqual(elements.openBrowserSetupNotice.style.display, 'flex');
     assert.ok(elements.openBrowserStatusBadge.textContent.includes('Microsoft Edge'));
+    assert.strictEqual(elements.btnOpenEdgeInspect.style.display, 'none');
+    assert.strictEqual(elements.openBrowserInstructions.style.display, 'none');
 
     elements.taskDirectiveInputBox.value = 'Open Gmail';
     sandbox.triggerBrowserWorkflow();

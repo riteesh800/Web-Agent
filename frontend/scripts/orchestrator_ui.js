@@ -380,9 +380,11 @@ function onOpenBrowserModeChanged() {
 
 async function refreshOpenBrowserStatus() {
     const badge = document.getElementById('openBrowserStatusBadge');
+    const setupBtn = document.getElementById('btnOpenEdgeInspect');
+    const instructions = document.getElementById('openBrowserInstructions');
     if (!badge) return;
     badge.className = 'open-browser-status-badge status-pending';
-    badge.textContent = 'Checking browser...';
+    badge.textContent = 'Checking Microsoft Edge...';
 
     try {
         const res = await fetch('/api/browser-status');
@@ -391,16 +393,46 @@ async function refreshOpenBrowserStatus() {
         if (status.ambiguous) {
             badge.className = 'open-browser-status-badge status-warn';
             badge.textContent = `Multiple browsers ready (${(status.browsers || []).join(', ')})`;
+            if (setupBtn) setupBtn.style.display = 'none';
+            if (instructions) instructions.style.display = 'block';
         } else if (status.ready) {
             badge.className = 'open-browser-status-badge status-ready';
-            badge.textContent = `✔ Ready: ${(status.browsers || ['Open Browser']).join(', ')}`;
+            badge.textContent = `✔ Ready: ${(status.browsers || ['Microsoft Edge']).join(', ')}`;
+            if (setupBtn) setupBtn.style.display = 'none';
+            if (instructions) instructions.style.display = 'none';
         } else {
             badge.className = 'open-browser-status-badge status-warn';
             badge.textContent = 'Needs remote debugging toggle in Microsoft Edge';
+            if (setupBtn) setupBtn.style.display = 'inline-flex';
+            if (instructions) instructions.style.display = 'block';
         }
     } catch (err) {
         badge.className = 'open-browser-status-badge status-pending';
         badge.textContent = 'Status unavailable';
+    }
+}
+
+async function openEdgeInspectSetup() {
+    const setupBtn = document.getElementById('btnOpenEdgeInspect');
+    const badge = document.getElementById('openBrowserStatusBadge');
+    if (setupBtn) {
+        setupBtn.disabled = true;
+        setupBtn.textContent = '⏳ Opening...';
+    }
+    try {
+        const res = await fetch('/api/open-edge-inspect', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (badge && res.ok && data.success) {
+            badge.className = 'open-browser-status-badge status-warn';
+            badge.textContent = 'Tick "Allow remote debugging" in Microsoft Edge tab, then click Check';
+        }
+    } catch (err) {
+        console.warn('Could not open edge://inspect/#remote-debugging:', err);
+    } finally {
+        if (setupBtn) {
+            setupBtn.disabled = false;
+            setupBtn.textContent = '🔧 Open Edge Setup';
+        }
     }
 }
 
@@ -798,6 +830,16 @@ async function sendUserQuery() {
 document.addEventListener('DOMContentLoaded', () => {
     fetchEnvKeys();
     fetchTaskHistory();
+    onOpenBrowserModeChanged();
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('focus', () => {
+            const openBrowserCheckbox = document.getElementById('useOpenBrowserCheckbox');
+            if (openBrowserCheckbox && openBrowserCheckbox.checked) {
+                refreshOpenBrowserStatus();
+            }
+        });
+    }
 
     document.addEventListener('keydown', (keyboardEvent) => {
         if (keyboardEvent.key === 'Escape') {
