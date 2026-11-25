@@ -25,6 +25,9 @@ from agent_core.navigation_driver import (
     HumanVerificationCoordinator,
     TaskExecutionCoordinator,
     build_verification_controller,
+    detect_open_browser_debugging,
+    format_browser_connection_guidance,
+    normalize_browser_mode,
 )
 from browser_use import Agent
 
@@ -249,6 +252,9 @@ async def browser_agent_stream(incoming_call):
         incoming_call.query_params.get("background_mode")
         or incoming_call.query_params.get("headless", "false")
     ).lower() == "true"
+    use_open_flag = incoming_call.query_params.get("use_open_browser", "false").lower() == "true"
+    browser_mode = "attached" if use_open_flag else normalize_browser_mode(incoming_call.query_params.get("browser_mode"))
+    effective_background = False if browser_mode == "attached" else is_background
 
     if not goal_directive:
         async def _missing_goal_stream():
@@ -297,7 +303,12 @@ async def browser_agent_stream(incoming_call):
     async def _stream_producer():
         async_worker = None
         try:
-            yield f"data: {json.dumps({'type': 'status', 'text': 'Starting Edge Browser Navigation Pipeline...'})}\n\n"
+            start_status = (
+                "Attaching to your open browser session (Edge / Chrome)..."
+                if browser_mode == "attached"
+                else "Starting Edge Browser Navigation Pipeline..."
+            )
+            yield f"data: {json.dumps({'type': 'status', 'text': start_status})}\n\n"
 
             def _publish_status(status_memo: str):
                 try:
@@ -307,7 +318,13 @@ async def browser_agent_stream(incoming_call):
 
             async def _execute_pipeline():
                 llm_runtime = construct_agent_llm(on_status_change=_publish_status)
-                browser_handle = await manager_handle.acquire_session(background_operation=is_background)
+                if browser_mode == "attached":
+                    browser_handle = await manager_handle.acquire_session(
+                        background_operation=False,
+                        browser_mode="attached",
+                    )
+                else:
+                    browser_handle = await manager_handle.acquire_session(background_operation=effective_background)
                 verification_controller = build_verification_controller()
 
                 navigation_agent = Agent(
@@ -396,11 +413,15 @@ async def browser_agent_stream(incoming_call):
                     TaskHistoryDatabase.record_task(goal_directive, False)
                 except Exception:
                     pass
-                fault_diagnostic = analyze_provider_exception(caught_fault)
-                if fault_diagnostic:
-                    yield f"data: {json.dumps({'type': 'api_limit', 'is_api_limit': True, 'api_name': fault_diagnostic['provider_title'], 'limit_type': fault_diagnostic['category'], 'text': str(caught_fault)})}\n\n"
+                guidance = format_browser_connection_guidance(caught_fault)
+                if guidance:
+                    yield f"data: {json.dumps({'type': 'error', 'text': guidance})}\n\n"
                 else:
-                    yield f"data: {json.dumps({'type': 'error', 'text': str(caught_fault)})}\n\n"
+                    fault_diagnostic = analyze_provider_exception(caught_fault)
+                    if fault_diagnostic:
+                        yield f"data: {json.dumps({'type': 'api_limit', 'is_api_limit': True, 'api_name': fault_diagnostic['provider_title'], 'limit_type': fault_diagnostic['category'], 'text': str(caught_fault)})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'type': 'error', 'text': str(caught_fault)})}\n\n"
         finally:
             coordinator.reset()
             task_coordinator.finish_run(run_id)
@@ -411,6 +432,13 @@ async def browser_agent_stream(incoming_call):
         _stream_producer(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+async def browser_status_action(incoming_call):
+    return JSONResponse(
+        detect_open_browser_debugging(),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
     )
 
 
@@ -445,6 +473,7 @@ def build_server_app() -> Starlette:
         Route("/api/save-key", save_token_action, methods=["POST"]),
         Route("/api/set-key", save_token_action, methods=["POST"]),
         Route("/api/health", system_readiness_check, methods=["GET"]),
+        Route("/api/browser-status", browser_status_action, methods=["GET"]),
         Mount("/static", StaticFiles(directory=str(static_assets_path)), name="static"),
     ]
     return Starlette(routes=configured_routes)

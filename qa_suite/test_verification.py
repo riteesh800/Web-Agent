@@ -4,6 +4,8 @@ import sys
 import unittest
 from starlette.testclient import TestClient
 
+from unittest.mock import AsyncMock, MagicMock
+
 suite_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if suite_directory not in sys.path:
     sys.path.insert(0, suite_directory)
@@ -12,6 +14,8 @@ from agent_core.navigation_driver import (
     BrowserSessionManager,
     HumanVerificationCoordinator,
     build_verification_controller,
+    format_browser_connection_guidance,
+    normalize_browser_mode,
 )
 from backend.gateway import build_server_app
 
@@ -105,6 +109,70 @@ class TestHumanVerificationFlow(unittest.TestCase):
             self.assertTrue(browser.keep_alive)
 
         asyncio.run(_test())
+
+    def test_browser_session_manager_attached_open_browser_mode_and_switch(self):
+        async def _test():
+            manager = BrowserSessionManager()
+            attached = await manager.acquire_session(background_operation=False, browser_mode="attached")
+            self.assertEqual(attached.kind, "chrome")
+            self.assertIsNone(attached.headless)
+            self.assertTrue(attached.keep_alive)
+            self.assertEqual(manager.active_mode, "attached")
+
+            # Switching back to isolated stops prior session cleanly
+            attached.stop = AsyncMock()
+            isolated = await manager.acquire_session(background_operation=False, browser_mode="isolated")
+            attached.stop.assert_awaited_once()
+            self.assertEqual(isolated.kind, "chromium")
+            self.assertFalse(isolated.headless)
+            self.assertEqual(manager.active_mode, "isolated")
+
+        asyncio.run(_test())
+
+    def test_normalize_browser_mode(self):
+        self.assertEqual(normalize_browser_mode("attached"), "attached")
+        self.assertEqual(normalize_browser_mode("open_browser"), "attached")
+        self.assertEqual(normalize_browser_mode("chrome"), "attached")
+        self.assertEqual(normalize_browser_mode("isolated"), "isolated")
+        self.assertEqual(normalize_browser_mode(""), "isolated")
+        self.assertEqual(normalize_browser_mode(None), "isolated")
+
+    def test_format_browser_connection_guidance(self):
+        setup_msg = format_browser_connection_guidance(
+            "Browser('chrome') could not attach: remote-debugging-setup: DevToolsActivePort not found"
+        )
+        self.assertIsNotNone(setup_msg)
+        self.assertIn("edge://inspect/#remote-debugging", setup_msg)
+        self.assertIn("chrome://inspect/#remote-debugging", setup_msg)
+
+        perm_msg = format_browser_connection_guidance("permission-blocked: Chrome did not approve")
+        self.assertIsNotNone(perm_msg)
+        self.assertIn("Allow", perm_msg)
+
+        not_running = format_browser_connection_guidance("chrome-not-running: no browser running")
+        self.assertIsNotNone(not_running)
+        self.assertIn("Microsoft Edge", not_running)
+
+        multi = format_browser_connection_guidance("several browsers have remote debugging on")
+        self.assertIsNotNone(multi)
+        self.assertIn("Multiple browsers", multi)
+
+        self.assertIsNone(format_browser_connection_guidance("Some unrelated ValueError"))
+
+    def test_extract_task_conclusion_formats_browser_connection_guidance(self):
+        fake_result = MagicMock()
+        fake_result.final_result.return_value = None
+        fake_result.text = None
+        fake_result.output = None
+        fake_result.messages = None
+        fake_result.status = "error"
+        fake_result.has_errors.return_value = True
+        fake_result.error = "Browser('chrome') could not attach: remote-debugging-setup"
+
+        summary, is_valid = BrowserSessionManager.extract_task_conclusion(fake_result)
+        self.assertFalse(is_valid)
+        self.assertIn("Open-Browser Attachment Setup Needed", summary)
+        self.assertIn("edge://inspect/#remote-debugging", summary)
 
 
 if __name__ == "__main__":

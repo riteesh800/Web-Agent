@@ -609,6 +609,13 @@ textarea:focus {
     flex-wrap: wrap;
 }
 
+.action-options {
+    display: flex;
+    align-items: center;
+    gap: 1.15rem;
+    flex-wrap: wrap;
+}
+
 .toggle-option {
     display: flex;
     align-items: center;
@@ -616,6 +623,81 @@ textarea:focus {
     font-size: 0.85rem;
     color: var(--text-secondary);
     cursor: pointer;
+}
+
+.toggle-option-accent {
+    color: #7dd3fc;
+    font-weight: 500;
+}
+
+.open-browser-notice {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background: rgba(2, 132, 199, 0.09);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    border-radius: 10px;
+    padding: 0.75rem 0.95rem;
+}
+
+.open-browser-notice-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.open-browser-notice-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #38bdf8;
+}
+
+.open-browser-status-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.open-browser-status-badge {
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 9999px;
+}
+
+.open-browser-status-badge.status-ready {
+    background: rgba(16, 185, 129, 0.16);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+}
+
+.open-browser-status-badge.status-warn {
+    background: rgba(245, 158, 11, 0.16);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.4);
+}
+
+.open-browser-status-badge.status-pending {
+    background: rgba(148, 163, 184, 0.15);
+    color: #cbd5e1;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.open-browser-notice-text {
+    font-size: 0.8rem;
+    color: #cbd5e1;
+    line-height: 1.5;
+}
+
+.open-browser-notice-text code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.76rem;
+    background: rgba(15, 23, 42, 0.85);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    color: #7dd3fc;
 }
 
 .btn-group {

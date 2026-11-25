@@ -350,6 +350,60 @@ async function storeSecretToken() {
     }
 }
 
+function onOpenBrowserModeChanged() {
+    const openBrowserCheckbox = document.getElementById('useOpenBrowserCheckbox');
+    const backgroundCheckbox = document.getElementById('backgroundModeCheckbox');
+    const noticeBox = document.getElementById('openBrowserSetupNotice');
+    const useOpen = Boolean(openBrowserCheckbox && openBrowserCheckbox.checked);
+
+    if (backgroundCheckbox) {
+        if (useOpen) {
+            backgroundCheckbox.dataset.prevChecked = backgroundCheckbox.checked ? '1' : '0';
+            backgroundCheckbox.checked = false;
+            backgroundCheckbox.disabled = true;
+        } else {
+            backgroundCheckbox.disabled = false;
+            if (backgroundCheckbox.dataset && backgroundCheckbox.dataset.prevChecked === '1') {
+                backgroundCheckbox.checked = true;
+            }
+        }
+    }
+
+    if (noticeBox) {
+        noticeBox.style.display = useOpen ? 'flex' : 'none';
+    }
+
+    if (useOpen) {
+        refreshOpenBrowserStatus();
+    }
+}
+
+async function refreshOpenBrowserStatus() {
+    const badge = document.getElementById('openBrowserStatusBadge');
+    if (!badge) return;
+    badge.className = 'open-browser-status-badge status-pending';
+    badge.textContent = 'Checking browser...';
+
+    try {
+        const res = await fetch('/api/browser-status');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const status = await res.json();
+        if (status.ambiguous) {
+            badge.className = 'open-browser-status-badge status-warn';
+            badge.textContent = `Multiple browsers ready (${(status.browsers || []).join(', ')})`;
+        } else if (status.ready) {
+            badge.className = 'open-browser-status-badge status-ready';
+            badge.textContent = `✔ Ready: ${(status.browsers || ['Open Browser']).join(', ')}`;
+        } else {
+            badge.className = 'open-browser-status-badge status-warn';
+            badge.textContent = 'Needs remote debugging toggle in Edge/Chrome';
+        }
+    } catch (err) {
+        badge.className = 'open-browser-status-badge status-pending';
+        badge.textContent = 'Status unavailable';
+    }
+}
+
 function insertPresetTask(sampleText) {
     const textarea = document.getElementById('taskDirectiveInputBox');
     textarea.value = sampleText;
@@ -378,7 +432,11 @@ function triggerBrowserWorkflow() {
         return;
     }
 
-    const isBackground = document.getElementById('backgroundModeCheckbox').checked;
+    const backgroundCheckbox = document.getElementById('backgroundModeCheckbox');
+    const isBackground = Boolean(backgroundCheckbox && backgroundCheckbox.checked);
+    const openBrowserCheckbox = document.getElementById('useOpenBrowserCheckbox');
+    const useOpenBrowser = Boolean(openBrowserCheckbox && openBrowserCheckbox.checked);
+    const effectiveBackground = useOpenBrowser ? false : isBackground;
     const triggerTaskButton = document.getElementById('startExecutionButton');
     const stopTaskButton = document.getElementById('stopExecutionButton');
     const logsDisplaySection = document.getElementById('liveTerminalCard');
@@ -436,7 +494,7 @@ function triggerBrowserWorkflow() {
         refreshHistoryAfterOutcome();
     };
 
-    const connectionUrl = `/api/run?task=${encodeURIComponent(directiveQuery)}&background_mode=${isBackground}&headless=${isBackground}`;
+    const connectionUrl = `/api/run?task=${encodeURIComponent(directiveQuery)}&background_mode=${effectiveBackground}&headless=${effectiveBackground}&browser_mode=${useOpenBrowser ? 'attached' : 'isolated'}`;
     try {
         activeLiveStreamConnection = new EventSource(connectionUrl);
     } catch (streamInitFault) {

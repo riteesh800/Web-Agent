@@ -6,7 +6,7 @@
     <title>Web Agent - Autonomous Browser & AI Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/styles/theme.css?v=3">
+    <link rel="stylesheet" href="/static/styles/theme.css?v=4">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
@@ -128,10 +128,16 @@
                 </div>
 
                 <div class="action-bar">
-                    <label class="toggle-option" title="Runs Microsoft Edge in the background without opening a visible window">
-                        <input type="checkbox" id="backgroundModeCheckbox">
-                        <span>Background Execution (Silent Mode)</span>
-                    </label>
+                    <div class="action-options">
+                        <label class="toggle-option" title="Runs Microsoft Edge in the background without opening a visible window">
+                            <input type="checkbox" id="backgroundModeCheckbox">
+                            <span>Background Execution (Silent Mode)</span>
+                        </label>
+                        <label class="toggle-option toggle-option-accent" title="Attaches to your already-open Microsoft Edge or Chrome window so Gmail, Google, and other signed-in sites stay trusted and logged in">
+                            <input type="checkbox" id="useOpenBrowserCheckbox" onchange="onOpenBrowserModeChanged()">
+                            <span>Use Open Browser (Gmail / Logged-In Sites)</span>
+                        </label>
+                    </div>
                     <div class="btn-group">
                         <button id="startExecutionButton" class="btn btn-action" onclick="triggerBrowserWorkflow()">
                             <span>▶ Run Task</span>
@@ -140,6 +146,21 @@
                             <span>■ Stop</span>
                         </button>
                     </div>
+                </div>
+
+                <div id="openBrowserSetupNotice" class="open-browser-notice" style="display:none;">
+                    <div class="open-browser-notice-header">
+                        <span class="open-browser-notice-title">🔐 Signed-In Browser Mode (Edge / Chrome)</span>
+                        <div class="open-browser-status-group">
+                            <span id="openBrowserStatusBadge" class="open-browser-status-badge status-pending">Checking browser...</span>
+                            <button type="button" class="btn btn-subtle" onclick="refreshOpenBrowserStatus()">↻ Check</button>
+                        </div>
+                    </div>
+                    <p class="open-browser-notice-text">
+                        Google Sign-In blocks isolated automated browsers (<code>--remote-debugging-port</code>). To use Gmail or already signed-in sites:
+                        open your normal <strong>Microsoft Edge</strong> (<code>edge://inspect/#remote-debugging</code>) or <strong>Google Chrome</strong> (<code>chrome://inspect/#remote-debugging</code>),
+                        tick <strong>Allow remote debugging for this browser instance</strong>, sign into Gmail there, and click <strong>Allow</strong> when prompted.
+                    </p>
                 </div>
             </div>
 
@@ -253,6 +274,6 @@
         </main>
     </div>
 
-    <script src="/static/scripts/orchestrator_ui.js?v=3"></script>
+    <script src="/static/scripts/orchestrator_ui.js?v=4"></script>
 </body>
 </html>

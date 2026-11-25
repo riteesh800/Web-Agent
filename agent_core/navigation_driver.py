@@ -26,7 +26,15 @@ BROWSER_SPEED_DIRECTIVES = (
     "     Immediately call `pause_for_human_verification` with a brief description of the challenge.\n"
     "     The frontend UI will alert the user to complete verification in the visible Microsoft Edge window.\n"
     "     Once resumed, re-inspect the page DOM and proceed with the task.\n\n"
-    "5. STRUCTURED REPORTING:\n"
+    "5. ACCOUNT SIGN-IN SECURITY REJECTIONS (E.G. GMAIL / GOOGLE):\n"
+    "   - If Google Sign-In or any login portal shows 'Couldn't sign you in' / 'This browser or app may not be secure' "
+    "(e.g. accounts.google.com/v3/signin/rejected):\n"
+    "     DO NOT repeatedly click 'Try again' or attempt workarounds.\n"
+    "     Stop immediately and report clearly that isolated automation mode is blocked by Google's browser-security check "
+    "(Chromium launched with --remote-debugging-port sets navigator.webdriver=true and starts with an empty temporary profile). "
+    "Instruct the user to enable 'Use Open Browser (Gmail / Logged-In Sites)' in the Web Agent UI, turn on remote debugging "
+    "at edge://inspect/#remote-debugging (Microsoft Edge) or chrome://inspect/#remote-debugging (Google Chrome), and sign in normally there.\n\n"
+    "6. STRUCTURED REPORTING:\n"
     "   - Conclude with a clean, bulleted Markdown synthesis including product names, links, and pricing."
 )
 
@@ -208,11 +216,102 @@ def _find_edge_executable() -> Optional[str]:
     return None
 
 
+def normalize_browser_mode(browser_mode: Optional[str]) -> str:
+    """Normalize requested browser session mode to 'attached' or 'isolated'."""
+    cleaned = (browser_mode or "").strip().lower()
+    if cleaned in {"attached", "open", "open_browser", "chrome"}:
+        return "attached"
+    return "isolated"
+
+
+def _label_browser_profile_dir(profile_dir: Path) -> str:
+    """Return a friendly browser name for a Chromium user-data directory."""
+    normalized = str(profile_dir).replace("\\", "/").lower()
+    if "microsoft/edge" in normalized or "microsoft edge" in normalized or "microsoft-edge" in normalized:
+        return "Microsoft Edge"
+    if "google/chrome" in normalized:
+        return "Google Chrome"
+    if "brave" in normalized:
+        return "Brave"
+    if "chromium" in normalized:
+        return "Chromium"
+    return profile_dir.name or "Browser"
+
+
+def detect_open_browser_debugging() -> Dict[str, Any]:
+    """Check whether any local Edge/Chrome browser currently has remote debugging enabled."""
+    try:
+        from browser_use.browser import local as browser_local
+
+        live_dirs = browser_local.live_debug_dirs()
+        browsers = [_label_browser_profile_dir(path) for path in live_dirs]
+        ambiguous = len(live_dirs) > 1 and live_dirs[0] != browser_local.chrome_user_data_dir()
+        return {
+            "ready": len(live_dirs) > 0,
+            "ambiguous": ambiguous,
+            "browsers": browsers,
+            "dirs": [str(path) for path in live_dirs],
+        }
+    except Exception as exc:
+        return {
+            "ready": False,
+            "ambiguous": False,
+            "browsers": [],
+            "dirs": [],
+            "error": str(exc),
+        }
+
+
+def format_browser_connection_guidance(error: Any) -> Optional[str]:
+    """Translate low-level browser-harness attachment errors into clear Edge/Chrome instructions."""
+    raw = str(error or "")
+    lower = raw.lower()
+
+    if "several browsers have remote debugging on" in lower:
+        return (
+            "Multiple browsers currently have remote debugging enabled, and none of them is Google Chrome. "
+            "Turn off 'Allow remote debugging for this browser instance' in all browsers except the one you want "
+            "the agent to control (edge://inspect/#remote-debugging for Microsoft Edge or chrome://inspect/#remote-debugging for Chrome), then run again."
+        )
+
+    if any(
+        token in lower
+        for token in (
+            "remote-debugging-setup",
+            "devtoolsactiveport not found",
+            "enable chrome://inspect",
+            "not live yet",
+        )
+    ):
+        return (
+            "Open-browser attachment needs remote debugging enabled in your running browser (one-time per browser session):\n"
+            "1. Open Microsoft Edge (or Google Chrome) normally and sign into Gmail or your sites there.\n"
+            "2. Visit edge://inspect/#remote-debugging (in Edge) or chrome://inspect/#remote-debugging (in Chrome).\n"
+            "3. Tick 'Allow remote debugging for this browser instance'.\n"
+            "4. Run your task again and click 'Allow' on the browser's permission prompt."
+        )
+
+    if "permission-blocked" in lower:
+        return (
+            "Your browser did not approve the remote debugging connection (the 'Allow remote debugging?' prompt was dismissed, denied, or timed out). "
+            "Run the task again and click 'Allow' when Microsoft Edge or Google Chrome asks."
+        )
+
+    if "chrome-not-running" in lower:
+        return (
+            "No running Microsoft Edge or Google Chrome window was found to attach to. "
+            "Open your browser normally, enable remote debugging at edge://inspect/#remote-debugging (or chrome://inspect/#remote-debugging), and run the task again."
+        )
+
+    return None
+
+
 class BrowserSessionManager:
     _singleton_handle: Optional["BrowserSessionManager"] = None
 
     def __init__(self):
         self.active_session: Optional[Browser] = None
+        self.active_mode: Optional[str] = None
 
     @classmethod
     def obtain_manager(cls) -> "BrowserSessionManager":
@@ -220,15 +319,23 @@ class BrowserSessionManager:
             cls._singleton_handle = BrowserSessionManager()
         return cls._singleton_handle
 
-    async def acquire_session(self, background_operation: bool) -> Browser:
+    async def acquire_session(self, background_operation: bool, browser_mode: str = "isolated") -> Browser:
+        normalized_mode = normalize_browser_mode(browser_mode)
+        target_kind = "chrome" if normalized_mode == "attached" else "chromium"
+
         if self.active_session is not None:
+            session_kind = getattr(self.active_session, "kind", None)
             session_headless = getattr(self.active_session, "headless", None)
-            if session_headless != background_operation:
+            needs_replace = session_kind != target_kind or (
+                target_kind == "chromium" and session_headless != background_operation
+            )
+            if needs_replace:
                 try:
                     await self.active_session.stop()
                 except Exception:
                     pass
                 self.active_session = None
+                self.active_mode = None
 
         if (
             self.active_session is None
@@ -239,20 +346,25 @@ class BrowserSessionManager:
                 and self.active_session._local.proc.poll() is not None
             )
         ):
-            edge_executable = _find_edge_executable()
-            browser_kwargs: Dict[str, Any] = {
-                "headless": background_operation,
-                "keep_alive": True,
-            }
-            if edge_executable:
-                browser_kwargs["executable_path"] = edge_executable
-            self.active_session = Browser("chromium", **browser_kwargs)
+            if target_kind == "chrome":
+                self.active_session = Browser("chrome", keep_alive=True)
+            else:
+                edge_executable = _find_edge_executable()
+                browser_kwargs: Dict[str, Any] = {
+                    "headless": background_operation,
+                    "keep_alive": True,
+                }
+                if edge_executable:
+                    browser_kwargs["executable_path"] = edge_executable
+                self.active_session = Browser("chromium", **browser_kwargs)
+            self.active_mode = normalized_mode
 
         return self.active_session
 
     async def terminate_session(self):
         session = self.active_session
         self.active_session = None
+        self.active_mode = None
         if session is not None:
             try:
                 await session.stop()
@@ -277,8 +389,11 @@ class BrowserSessionManager:
 
         if not extracted_summary:
             fault_memo = getattr(execution_output, "error", "") or ""
+            connection_guidance = format_browser_connection_guidance(fault_memo) if fault_memo else None
             diagnostic_details = analyze_provider_exception(fault_memo) if fault_memo else None
-            if diagnostic_details:
+            if connection_guidance:
+                extracted_summary = f"🔐 **Open-Browser Attachment Setup Needed**\n\n{connection_guidance}"
+            elif diagnostic_details:
                 extracted_summary = (
                     f"⚠️ **{diagnostic_details['provider_title']} Limit Reached ({diagnostic_details['category'].replace('_', ' ').title()})**\n\n"
                     f"Operation paused because {diagnostic_details['provider_title']} reached request boundaries."
