@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import unittest
 import os
 import sys
@@ -83,6 +85,16 @@ class TestHttpGateway(unittest.TestCase):
         finally:
             if original_groq:
                 self.http_tester.post("/api/save-key", json={"provider": "groq", "key": original_groq})
+
+    def test_frontend_script_served_and_valid_syntax(self):
+        http_packet = self.http_tester.get("/static/scripts/orchestrator_ui.js")
+        self.assertEqual(http_packet.status_code, 200)
+        self.assertIn("function triggerBrowserWorkflow()", http_packet.text)
+        node_bin = shutil.which("node")
+        if node_bin:
+            script_path = os.path.join(suite_directory, "frontend", "scripts", "orchestrator_ui.js")
+            proc = subprocess.run([node_bin, "--check", script_path], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, f"JS syntax check failed:\n{proc.stderr}")
 
 
 if __name__ == "__main__":

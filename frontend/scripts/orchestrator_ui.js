@@ -506,7 +506,6 @@ async function confirmVerificationDone() {
         }
     }
 }
-}
 
 function duplicateSummaryContent() {
     if (retainedResearchOutput) {
