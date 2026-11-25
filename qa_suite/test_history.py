@@ -1,3 +1,5 @@
+import shutil
+import subprocess
 import unittest
 import os
 import sys
@@ -69,6 +71,171 @@ class TestTaskHistory(unittest.TestCase):
         get_data = get_resp.json()
         self.assertEqual(len(get_data["history"]), 1)
         self.assertEqual(get_data["history"][0]["task"], "Search AI trends 2026")
+
+    def test_frontend_history_hidden_while_running_until_outcome(self):
+        node_bin = shutil.which("node")
+        if not node_bin:
+            self.skipTest("Node.js runtime not available for frontend behavior verification")
+
+        script_path = os.path.join(suite_directory, "frontend", "scripts", "orchestrator_ui.js")
+        node_harness = r"""
+const assert = require('assert');
+const fs = require('fs');
+const vm = require('vm');
+
+const scriptPath = process.argv[1];
+const source = fs.readFileSync(scriptPath, 'utf8');
+
+function createElement(id) {
+    return {
+        id,
+        value: '',
+        checked: false,
+        disabled: false,
+        _innerHTML: '',
+        get innerHTML() { return this._innerHTML; },
+        set innerHTML(val) {
+            this._innerHTML = val;
+            if (val === '') this.children = [];
+        },
+        textContent: '',
+        className: '',
+        title: '',
+        style: { display: 'none' },
+        children: [],
+        scrollTop: 0,
+        scrollHeight: 0,
+        appendChild(child) { this.children.push(child); },
+        addEventListener() {},
+        focus() {},
+        scrollIntoView() {},
+    };
+}
+
+const elements = {};
+for (const id of [
+    'taskDirectiveInputBox', 'backgroundModeCheckbox', 'startExecutionButton',
+    'liveTerminalCard', 'summaryDisplayCard', 'summaryContentContainer',
+    'summaryStatusHeading', 'humanVerificationCard', 'verificationPromptMessage',
+    'btnConfirmVerification', 'logsDisplaySection', 'taskHistoryContainer',
+    'taskHistoryList', 'chatQueryInputBox',
+]) {
+    elements[id] = createElement(id);
+}
+
+let currentHistory = [{ task: 'Previous finished task', succeeded: true }];
+let fetchCallCount = 0;
+let activeStreams = [];
+
+class MockEventSource {
+    constructor(url) {
+        this.url = url;
+        this.closed = false;
+        this.onmessage = null;
+        this.onerror = null;
+        activeStreams.push(this);
+    }
+    close() { this.closed = true; }
+}
+
+const sandbox = {
+    console,
+    JSON,
+    encodeURIComponent,
+    setTimeout,
+    clearTimeout,
+    alert(msg) { throw new Error('Unexpected alert: ' + msg); },
+    marked: { parse: (txt) => txt },
+    EventSource: MockEventSource,
+    fetch: async (url) => {
+        if (url === '/api/history') {
+            fetchCallCount += 1;
+            return {
+                ok: true,
+                json: async () => ({ history: currentHistory }),
+            };
+        }
+        throw new Error('Unexpected fetch: ' + url);
+    },
+    document: {
+        getElementById: (id) => elements[id] || null,
+        createElement: (tag) => createElement(tag),
+        addEventListener: () => {},
+    },
+};
+
+vm.runInNewContext(source, sandbox);
+
+(async () => {
+    // 1. Initial load shows existing history
+    await sandbox.fetchTaskHistory();
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'flex');
+    assert.strictEqual(elements.taskHistoryList.children.length, 1);
+
+    // 2. Starting a task hides the history box while running (and across logs / verification)
+    elements.taskDirectiveInputBox.value = 'Run a new task';
+    sandbox.triggerBrowserWorkflow();
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+
+    const stream1 = activeStreams[0];
+    stream1.onmessage({ data: JSON.stringify({ type: 'status', text: 'Starting...' }) });
+    stream1.onmessage({ data: JSON.stringify({ type: 'log', text: 'Step 1' }) });
+    stream1.onmessage({ data: JSON.stringify({ type: 'verification_required', reason: 'CAPTCHA' }) });
+    stream1.onmessage({ data: JSON.stringify({ type: 'verification_completed', text: 'Resumed' }) });
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+
+    // Even if renderTaskHistory is called mid-run, history stays hidden
+    sandbox.renderTaskHistory(currentHistory);
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+
+    // 3. Once the task succeeds ('result'), history is shown again with updated items
+    const fetchesBeforeResult = fetchCallCount;
+    currentHistory = [
+        { task: 'Run a new task', succeeded: true },
+        { task: 'Previous finished task', succeeded: true },
+    ];
+    stream1.onmessage({ data: JSON.stringify({ type: 'result', text: 'Done!', success: true }) });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'flex');
+    assert.strictEqual(elements.taskHistoryList.children.length, 2);
+    stream1.onmessage({ data: JSON.stringify({ type: 'done' }) });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(fetchCallCount, fetchesBeforeResult + 1);
+
+    // 4. Starting a failing task hides history until error/api_limit outcome arrives
+    elements.taskDirectiveInputBox.value = 'Run a failing task';
+    sandbox.triggerBrowserWorkflow();
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+
+    const stream2 = activeStreams[1];
+    stream2.onmessage({ data: JSON.stringify({ type: 'log', text: 'Navigating...' }) });
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+
+    currentHistory = [
+        { task: 'Run a failing task', succeeded: false },
+        { task: 'Run a new task', succeeded: true },
+    ];
+    stream2.onmessage({ data: JSON.stringify({ type: 'error', text: 'Boom' }) });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'flex');
+    assert.strictEqual(elements.taskHistoryList.children.length, 2);
+    stream2.onmessage({ data: JSON.stringify({ type: 'done' }) });
+
+    // 5. Stream onerror also restores history
+    elements.taskDirectiveInputBox.value = 'Run interrupted task';
+    sandbox.triggerBrowserWorkflow();
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'none');
+    const stream3 = activeStreams[2];
+    stream3.onerror();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(elements.taskHistoryContainer.style.display, 'flex');
+})().catch((err) => {
+    console.error(err);
+    process.exit(1);
+});
+"""
+        proc = subprocess.run([node_bin, "-e", node_harness, script_path], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, f"Frontend history test failed:\n{proc.stderr}\n{proc.stdout}")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,14 @@ let selectedViewMode = 'browser';
 let retainedResearchOutput = '';
 let conversationHistoryRecords = [];
 let activeLiveStreamConnection = null;
+let isTaskRunning = false;
+
+function hideTaskHistory() {
+    const container = document.getElementById('taskHistoryContainer');
+    if (container) {
+        container.style.display = 'none';
+    }
+}
 
 async function fetchTaskHistory() {
     try {
@@ -22,6 +30,11 @@ function renderTaskHistory(historyItems) {
     if (!historyItems || historyItems.length === 0) {
         container.style.display = 'none';
         list.innerHTML = '';
+        return;
+    }
+
+    if (isTaskRunning) {
+        container.style.display = 'none';
         return;
     }
 
@@ -375,6 +388,9 @@ function triggerBrowserWorkflow() {
         verificationCard.style.display = 'none';
     }
 
+    isTaskRunning = true;
+    hideTaskHistory();
+
     logsDisplaySection.style.display = 'flex';
     summaryDisplayCard.style.display = 'none';
     flushTerminalScreen();
@@ -388,8 +404,35 @@ function triggerBrowserWorkflow() {
         activeLiveStreamConnection.close();
     }
 
+    let hasFetchedOutcomeHistory = false;
+    const refreshHistoryAfterOutcome = () => {
+        isTaskRunning = false;
+        if (!hasFetchedOutcomeHistory) {
+            hasFetchedOutcomeHistory = true;
+            fetchTaskHistory();
+        }
+    };
+
+    const finishTaskStreamUi = () => {
+        const card = document.getElementById('humanVerificationCard');
+        if (card) card.style.display = 'none';
+        if (activeLiveStreamConnection) {
+            activeLiveStreamConnection.close();
+            activeLiveStreamConnection = null;
+        }
+        triggerTaskButton.disabled = false;
+        triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
+        refreshHistoryAfterOutcome();
+    };
+
     const connectionUrl = `/api/run?task=${encodeURIComponent(directiveQuery)}&background_mode=${isBackground}&headless=${isBackground}`;
-    activeLiveStreamConnection = new EventSource(connectionUrl);
+    try {
+        activeLiveStreamConnection = new EventSource(connectionUrl);
+    } catch (streamInitFault) {
+        appendLogItem(`Failed to start task stream: ${streamInitFault.message}`, 'entry-err');
+        finishTaskStreamUi();
+        return;
+    }
 
     activeLiveStreamConnection.onmessage = (eventPacket) => {
         try {
@@ -436,18 +479,14 @@ function triggerBrowserWorkflow() {
                     statusHeadingElement.innerHTML = '<span>⚠️</span> Task Finished with Notice';
                     statusHeadingElement.style.color = '#fbbf24';
                 }
+                refreshHistoryAfterOutcome();
             } else if (receivedPacket.type === 'error' || receivedPacket.type === 'api_limit') {
                 const card = document.getElementById('humanVerificationCard');
                 if (card) card.style.display = 'none';
                 appendLogItem(receivedPacket.text, 'entry-err');
+                refreshHistoryAfterOutcome();
             } else if (receivedPacket.type === 'done') {
-                const card = document.getElementById('humanVerificationCard');
-                if (card) card.style.display = 'none';
-                activeLiveStreamConnection.close();
-                activeLiveStreamConnection = null;
-                triggerTaskButton.disabled = false;
-                triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
-                fetchTaskHistory();
+                finishTaskStreamUi();
             }
         } catch (parseFault) {
             appendLogItem(`Stream parsing notice: ${eventPacket.data}`);
@@ -455,16 +494,8 @@ function triggerBrowserWorkflow() {
     };
 
     activeLiveStreamConnection.onerror = () => {
-        const card = document.getElementById('humanVerificationCard');
-        if (card) card.style.display = 'none';
         appendLogItem('Stream connection concluded.', 'entry-warn');
-        if (activeLiveStreamConnection) {
-            activeLiveStreamConnection.close();
-            activeLiveStreamConnection = null;
-        }
-        triggerTaskButton.disabled = false;
-        triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
-        fetchTaskHistory();
+        finishTaskStreamUi();
     };
 }
 
