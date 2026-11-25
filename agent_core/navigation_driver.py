@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import json
 import os
 import shutil
@@ -19,14 +20,24 @@ _INSPECT_OPEN_COOLDOWN_S: float = 15.0
 
 BROWSER_SPEED_DIRECTIVES = (
     "HIGH-SPEED BROWSING & RESEARCH INSTRUCTIONS:\n"
-    "1. DIRECT NAVIGATION:\n"
+    "1. DIRECT NAVIGATION & SEARCH URLS:\n"
     "   - If target store/site is specified (Amazon, YouTube, Google, Wikipedia, Reddit, etc.), "
-    "navigate directly to target URL rather than using generic search engines.\n"
-    "   - Use search engine only when domain is unknown.\n\n"
+    "navigate directly to its target or search URL rather than loading a homepage and typing in a search box:\n"
+    "     e.g., `https://www.amazon.com/s?k=<query>`, `https://www.youtube.com/results?search_query=<query>`, "
+    "`https://www.google.com/search?q=<query>`, `https://en.wikipedia.org/wiki/Special:Search?search=<query>`.\n"
+    "   - Use a search engine only when the target domain is unknown.\n\n"
     "2. INSTANT FILTERING & SORTING:\n"
     "   - Append sort query arguments directly to URL for 0-step sorting (e.g. Amazon: `&s=price-asc-rank`).\n\n"
-    "3. RAPID DOM EXTRACTION:\n"
-    "   - Extract structured cards or listings using concise JavaScript evaluation rather than parsing massive accessibility trees.\n\n"
+    "3. BATCH ACTIONS & RAPID DOM EXTRACTION (MINIMIZE STEPS):\n"
+    "   - Combine everything known in ONE `python(...)` cell: always pair `goto_url(url)` with `bu.state()` "
+    "(or `wait_for_load(); js(...)`) in the same cell so you never waste an extra turn just waiting to see the page.\n"
+    "   - Chain consecutive form fills and submit/clicks in ONE cell (`bu.type(id, val, enter=True)` or `bu.type(id, val); bu.click(btn_id)`).\n"
+    "   - Extract structured cards or listings using concise `js(...)` evaluation rather than scrolling repeatedly.\n"
+    "   - Never add `time.sleep()`, `wait_for_load()`, or `wait_for_network_idle()` after `bu.*` calls (they already settle), "
+    "and skip `screenshot()` unless visual pixel inspection is truly required.\n"
+    "   - CRITICAL TOOL RULE: `finish` and `finish_from_repl` are TOP-LEVEL AGENT TOOLS, NOT Python functions inside the `python` REPL. "
+    "Never write `finish(...)` or `finish_from_repl(...)` inside `python` code. As soon as `[state]` or `js(...)` shows the answer, "
+    "call the `finish` or `finish_from_repl` tool directly without extra verification steps.\n\n"
     "4. CAPTCHA & HUMAN VERIFICATION HANDLING:\n"
     "   - When ANY security check, CAPTCHA, reCAPTCHA, hCaptcha, Cloudflare turnstile, or 'verify you are human' prompt appears:\n"
     "     DO NOT attempt to solve, guess, or bypass it automatically.\n"
@@ -196,6 +207,7 @@ def build_verification_controller() -> Controller:
     return controller
 
 
+@functools.lru_cache(maxsize=1)
 def _find_edge_executable() -> str:
     """Locate the installed Microsoft Edge binary. Raises RuntimeError if not found to strictly enforce Edge."""
     candidates = []
@@ -283,9 +295,10 @@ def find_edge_devtools_port() -> Optional[int]:
     return endpoint[0] if endpoint is not None else None
 
 
-def resolve_edge_cdp_url(port: int) -> str:
+def resolve_edge_cdp_url(port: int, endpoint: Optional[Tuple[int, Optional[str], Path]] = None) -> str:
     """Resolve the WebSocket CDP URL for Edge (modern Edge disables /json/version HTTP discovery on default dir)."""
-    endpoint = find_edge_devtools_endpoint()
+    if endpoint is None:
+        endpoint = find_edge_devtools_endpoint()
     if endpoint is not None and endpoint[0] == port and endpoint[1]:
         return f"ws://127.0.0.1:{port}{endpoint[1]}"
     return f"http://127.0.0.1:{port}"

@@ -6,12 +6,22 @@ from contextlib import asynccontextmanager
 
 from browser_use import ChatGoogle, ChatOpenAI, ChatAnthropic
 from browser_use.agent.loop import WrapperModel
+from browser_use.llm import compatible_profile
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelSettings, ModelRequestParameters, ModelResponse
 
 from core_config.environment_loader import ConfigRegistry
 
 failover_logger = logging.getLogger("web_agent.failover")
+
+_GOOGLE_ONLY_SETTINGS = frozenset({"thinking", "max_retries", "google_thinking_config"})
+
+
+def _sanitize_secondary_params(tuning_params: Optional[ModelSettings]) -> Optional[ModelSettings]:
+    if not isinstance(tuning_params, dict):
+        return tuning_params
+    cleaned = {k: v for k, v in tuning_params.items() if k not in _GOOGLE_ONLY_SETTINGS}
+    return cleaned  # type: ignore[return-value]
 
 
 class ResilientModelBridge(WrapperModel):
@@ -21,12 +31,15 @@ class ResilientModelBridge(WrapperModel):
         secondary_engine: Any,
         turnaround_limit: float = 14.0,
         status_broadcaster: Optional[Callable[[str], None]] = None,
+        primary_cooldown_s: float = 20.0,
     ):
         super().__init__(primary_engine)
         self.primary_engine = primary_engine
         self.secondary_engine = secondary_engine
         self.turnaround_limit = turnaround_limit
         self.status_broadcaster = status_broadcaster
+        self.primary_cooldown_s = primary_cooldown_s
+        self._primary_cooldown_until: float = 0.0
         self.active_tier = "gemini"
 
     def _broadcast(self, announcement: str):
@@ -37,33 +50,61 @@ class ResilientModelBridge(WrapperModel):
             except Exception:
                 pass
 
+    async def _invoke_secondary(
+        self,
+        message_sequence: List[ModelMessage],
+        tuning_params: Optional[ModelSettings],
+        call_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        secondary_params = _sanitize_secondary_params(tuning_params)
+        timer_start = time.monotonic()
+        fallback_verdict = await asyncio.wait_for(
+            self.secondary_engine.request(message_sequence, secondary_params, call_parameters),
+            timeout=self.turnaround_limit,
+        )
+        elapsed_duration = time.monotonic() - timer_start
+        self.active_tier = "groq"
+        self._broadcast(f"[Failover] Fallback action succeeded in {elapsed_duration:.2f}s")
+        return fallback_verdict
+
     async def request(
         self,
         message_sequence: List[ModelMessage],
         tuning_params: Optional[ModelSettings],
         call_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        now = time.monotonic()
+        if now < self._primary_cooldown_until:
+            try:
+                return await self._invoke_secondary(message_sequence, tuning_params, call_parameters)
+            except Exception as fault_cooldown:
+                self._broadcast(f"[Failover] Cooldown fallback fault ({fault_cooldown}); retrying primary...")
+                self._primary_cooldown_until = 0.0
+
         self._broadcast("[Failover] Invoking primary model engine...")
         primary_fault = None
         try:
-            primary_verdict = await self.primary_engine.request(message_sequence, tuning_params, call_parameters)
+            primary_verdict = await asyncio.wait_for(
+                self.primary_engine.request(message_sequence, tuning_params, call_parameters),
+                timeout=self.turnaround_limit,
+            )
             self.active_tier = "gemini"
+            self._primary_cooldown_until = 0.0
             return primary_verdict
+        except asyncio.TimeoutError as fault_timeout:
+            primary_fault = fault_timeout
+            self._primary_cooldown_until = time.monotonic() + self.primary_cooldown_s
+            self._broadcast(
+                f"[Failover] Primary model exceeded {self.turnaround_limit}s limit. Transferring to fallback..."
+            )
         except Exception as fault_gemini:
             primary_fault = fault_gemini
+            self._primary_cooldown_until = time.monotonic() + self.primary_cooldown_s
             self._broadcast(f"[Failover] Primary model fault: {fault_gemini}. Transferring to fallback...")
 
         try:
             self._broadcast(f"[Failover] Activating Groq model (limit={self.turnaround_limit}s)...")
-            timer_start = time.monotonic()
-            fallback_verdict = await asyncio.wait_for(
-                self.secondary_engine.request(message_sequence, tuning_params, call_parameters),
-                timeout=self.turnaround_limit,
-            )
-            elapsed_duration = time.monotonic() - timer_start
-            self.active_tier = "groq"
-            self._broadcast(f"[Failover] Fallback action succeeded in {elapsed_duration:.2f}s")
-            return fallback_verdict
+            return await self._invoke_secondary(message_sequence, tuning_params, call_parameters)
         except asyncio.TimeoutError:
             self._broadcast(f"[Failover] Fallback latency surpassed {self.turnaround_limit}s threshold.")
         except Exception as fault_groq:
@@ -71,6 +112,7 @@ class ResilientModelBridge(WrapperModel):
 
         self._broadcast("[Failover] Reverting to primary model engine...")
         self.active_tier = "gemini"
+        self._primary_cooldown_until = 0.0
         try:
             return await self.primary_engine.request(message_sequence, tuning_params, call_parameters)
         except Exception as fault_recovery:
@@ -100,7 +142,7 @@ class ResilientModelBridge(WrapperModel):
 
         try:
             async with self.secondary_engine.request_stream(
-                message_sequence, tuning_params, call_parameters, execution_context
+                message_sequence, _sanitize_secondary_params(tuning_params), call_parameters, execution_context
             ) as stream_conduit:
                 yield stream_conduit
                 return
@@ -113,6 +155,35 @@ class ResilientModelBridge(WrapperModel):
             yield stream_conduit
 
 
+def _build_fast_google_model(api_key: str, *, max_retries: int = 1) -> Any:
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+    return GoogleModel(
+        "gemini-3.5-flash-lite",
+        provider=GoogleProvider(api_key=api_key),
+        settings={"thinking": "low", "max_retries": max_retries},
+    )
+
+
+def _build_fast_groq_model(api_key: str, *, timeout: float = 14.0) -> Any:
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    client = AsyncOpenAI(
+        base_url="https://api.groq.com/openai/v1",
+        api_key=api_key,
+        max_retries=0,
+        timeout=timeout,
+    )
+    return OpenAIChatModel(
+        "qwen/qwen3.8-27b",
+        provider=OpenAIProvider(openai_client=client),
+        profile=compatible_profile(),
+    )
+
+
 def construct_agent_llm(on_status_change: Optional[Callable[[str], None]] = None) -> Any:
     gemini_credential = ConfigRegistry.lookup_secret("GOOGLE_API_KEY", "GEMINI_API_KEY")
     groq_credential = ConfigRegistry.lookup_secret("GROQ_API_KEY")
@@ -122,12 +193,9 @@ def construct_agent_llm(on_status_change: Optional[Callable[[str], None]] = None
     latency_limit = ConfigRegistry.read_numeric_setting("AI_ENGINE_TIMEOUT", 14.0)
 
     if gemini_credential and groq_credential:
-        gemini_wrapped = ChatGoogle("gemini-flash-lite-latest", api_key=gemini_credential).pydantic_model()
-        groq_wrapped = ChatOpenAI(
-            "qwen/qwen3.8-27b",
-            base_url="https://api.groq.com/openai/v1",
-            api_key=groq_credential,
-        ).pydantic_model()
+        # Fail over immediately on 503/429 instead of sleeping on SDK retries before switching to Groq.
+        gemini_wrapped = _build_fast_google_model(gemini_credential, max_retries=0)
+        groq_wrapped = _build_fast_groq_model(groq_credential, timeout=latency_limit)
         return ResilientModelBridge(
             primary_engine=gemini_wrapped,
             secondary_engine=groq_wrapped,
@@ -135,7 +203,7 @@ def construct_agent_llm(on_status_change: Optional[Callable[[str], None]] = None
             status_broadcaster=on_status_change,
         )
     elif gemini_credential:
-        return ChatGoogle("gemini-flash-lite-latest", api_key=gemini_credential)
+        return _build_fast_google_model(gemini_credential, max_retries=1)
     elif groq_credential:
         return ChatOpenAI(
             "qwen/qwen3.8-27b",

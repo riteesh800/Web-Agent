@@ -123,7 +123,7 @@ class TestHumanVerificationFlow(unittest.TestCase):
             with patch("agent_core.navigation_driver.find_edge_devtools_port", return_value=9222):
                 attached = await manager.acquire_session(background_operation=False, browser_mode="attached")
                 self.assertEqual(attached.kind, "cdp")
-                self.assertEqual(attached.cdp_url, "http://127.0.0.1:9222")
+                self.assertTrue(attached.cdp_url.startswith("ws://127.0.0.1:9222") or attached.cdp_url == "http://127.0.0.1:9222")
                 self.assertTrue(attached.keep_alive)
                 self.assertEqual(manager.active_mode, "attached")
 

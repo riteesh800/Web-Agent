@@ -320,7 +320,7 @@ async def browser_agent_stream(incoming_call):
                     pass
 
             async def _execute_pipeline():
-                llm_runtime = construct_agent_llm(on_status_change=_publish_status)
+                llm_task = asyncio.create_task(asyncio.to_thread(construct_agent_llm, _publish_status))
                 if browser_mode == "attached":
                     await ensure_edge_debugging_ready(
                         on_status=_publish_status,
@@ -338,6 +338,12 @@ async def browser_agent_stream(incoming_call):
                     await ensure_attached_working_tab(browser_handle, ui_netloc=ui_netloc)
                 else:
                     browser_handle = await manager_handle.acquire_session(background_operation=effective_background)
+                    if (
+                        getattr(browser_handle, "_env", None) is None
+                        and asyncio.iscoroutinefunction(getattr(browser_handle, "start", None))
+                    ):
+                        await browser_handle.start()
+                llm_runtime = await llm_task
                 verification_controller = build_verification_controller()
 
                 navigation_agent = Agent(
@@ -346,10 +352,13 @@ async def browser_agent_stream(incoming_call):
                     browser=browser_handle,
                     controller=verification_controller,
                     extend_system_message=BROWSER_SPEED_DIRECTIVES,
+                    reasoning="low",
                     highlight_actions=False,
                     mode="ultrafast",
                     judge=False,
                 )
+                if getattr(llm_runtime, "secondary_engine", None) is not None:
+                    navigation_agent._preflighted = True
                 return await navigation_agent.run()
 
             async_worker = asyncio.create_task(_execute_pipeline())

@@ -8,13 +8,21 @@ class ConfigRegistry:
     storage_root = Path(__file__).resolve().parent.parent
     ui_directory = storage_root / "frontend"
     primary_secrets_path = storage_root / ".env"
+    _last_env_signature: Optional[Tuple[Path, Optional[int]]] = None
 
     @classmethod
-    def sync_environment(cls):
-        if cls.primary_secrets_path.exists():
-            load_dotenv(dotenv_path=cls.primary_secrets_path, override=True)
+    def sync_environment(cls, force: bool = False):
+        target = cls.primary_secrets_path
+        exists = target.exists()
+        mtime_ns = target.stat().st_mtime_ns if exists else None
+        sig = (target, mtime_ns)
+        if not force and cls._last_env_signature == sig:
+            return
+        if exists:
+            load_dotenv(dotenv_path=target, override=True)
         else:
             load_dotenv(override=True)
+        cls._last_env_signature = sig
 
     @classmethod
     def lookup_secret(cls, variable_identifier: str, alternate_identifier: Optional[str] = None) -> Optional[str]:
@@ -101,7 +109,7 @@ class VaultManager:
                 serialized_rows.append(f"{var_name}={token_clean}")
 
         target_file.write_text("\n".join(serialized_rows) + "\n", encoding="utf-8")
-        ConfigRegistry.sync_environment()
+        ConfigRegistry.sync_environment(force=True)
         return True, label_text, f"Successfully saved {label_text} credentials to .env."
 
     @classmethod
@@ -130,5 +138,5 @@ class VaultManager:
             serialized_rows.append(f"{chosen_var}={token_clean}")
 
         target_file.write_text("\n".join(serialized_rows) + "\n", encoding="utf-8")
-        ConfigRegistry.sync_environment()
+        ConfigRegistry.sync_environment(force=True)
         return True, label_text, f"Successfully activated {label_text} credentials."
