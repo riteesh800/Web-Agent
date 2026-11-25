@@ -84,6 +84,84 @@ class HumanVerificationCoordinator:
         self.last_reason = ""
 
 
+class TaskExecutionCoordinator:
+    """Tracks the active browser-agent task so it can be cancelled immediately on user stop."""
+
+    _instance: Optional["TaskExecutionCoordinator"] = None
+
+    def __init__(self):
+        self.active_task: Optional[asyncio.Task] = None
+        self.stop_event: Optional[asyncio.Event] = None
+        self.is_running: bool = False
+        self.stop_requested: bool = False
+        self.run_id: int = 0
+
+    @classmethod
+    def get_coordinator(cls) -> "TaskExecutionCoordinator":
+        if cls._instance is None:
+            cls._instance = TaskExecutionCoordinator()
+        return cls._instance
+
+    def begin_run(self) -> Tuple[int, asyncio.Event]:
+        if self.active_task is not None and not self.active_task.done():
+            self.active_task.cancel()
+        self.run_id += 1
+        self.is_running = True
+        self.stop_requested = False
+        self.active_task = None
+        self.stop_event = asyncio.Event()
+        return self.run_id, self.stop_event
+
+    def attach_task(self, run_id: int, task: asyncio.Task):
+        if self.run_id != run_id:
+            return
+        self.active_task = task
+        if self.stop_requested and not task.done():
+            task.cancel()
+
+    async def request_stop(self, terminate_browser: bool = True) -> bool:
+        """Immediately halt the running agent task, clear any verification wait, and close the browser session."""
+        has_active_work = self.is_running or (self.active_task is not None and not self.active_task.done())
+        HumanVerificationCoordinator.get_coordinator().reset()
+
+        if not has_active_work:
+            return False
+
+        self.stop_requested = True
+        if self.stop_event is not None:
+            self.stop_event.set()
+
+        task_ref = self.active_task
+        if task_ref is not None and not task_ref.done():
+            task_ref.cancel()
+            try:
+                await asyncio.wait([task_ref], timeout=2.0)
+            except Exception:
+                pass
+
+        if terminate_browser:
+            try:
+                await asyncio.wait_for(BrowserSessionManager.obtain_manager().terminate_session(), timeout=5.0)
+            except Exception:
+                pass
+
+        return True
+
+    def finish_run(self, run_id: int):
+        if self.run_id == run_id:
+            self.is_running = False
+            self.active_task = None
+            self.stop_event = None
+
+    def reset(self):
+        if self.active_task is not None and not self.active_task.done():
+            self.active_task.cancel()
+        self.is_running = False
+        self.stop_requested = False
+        self.active_task = None
+        self.stop_event = None
+
+
 def build_verification_controller() -> Controller:
     controller = Controller()
 
@@ -173,12 +251,13 @@ class BrowserSessionManager:
         return self.active_session
 
     async def terminate_session(self):
-        if self.active_session is not None:
+        session = self.active_session
+        self.active_session = None
+        if session is not None:
             try:
-                await self.active_session.stop()
+                await session.stop()
             except Exception:
                 pass
-            self.active_session = None
 
     @staticmethod
     def extract_task_conclusion(execution_output: Any) -> Tuple[str, bool]:

@@ -23,6 +23,7 @@ from agent_core.navigation_driver import (
     BrowserSessionManager,
     BROWSER_SPEED_DIRECTIVES,
     HumanVerificationCoordinator,
+    TaskExecutionCoordinator,
     build_verification_controller,
 )
 from browser_use import Agent
@@ -218,6 +219,23 @@ async def resume_verification_action(incoming_call):
         return JSONResponse({"error": str(caught_fault)}, status_code=500)
 
 
+async def stop_browser_task_action(incoming_call):
+    try:
+        task_coordinator = TaskExecutionCoordinator.get_coordinator()
+        stopped = await task_coordinator.request_stop(terminate_browser=True)
+        if stopped:
+            return JSONResponse({
+                "success": True,
+                "message": "Task and browser agent stopped.",
+            })
+        return JSONResponse({
+            "success": False,
+            "message": "No active task running to stop.",
+        }, status_code=200)
+    except Exception as caught_fault:
+        return JSONResponse({"success": False, "error": str(caught_fault)}, status_code=500)
+
+
 async def browser_agent_stream(incoming_call):
     goal_directive = incoming_call.query_params.get("task", "").strip()
     is_background = (
@@ -242,6 +260,10 @@ async def browser_agent_stream(incoming_call):
     coordinator = HumanVerificationCoordinator.get_coordinator()
     coordinator.reset()
 
+    task_coordinator = TaskExecutionCoordinator.get_coordinator()
+    run_id, stop_event = task_coordinator.begin_run()
+    manager_handle = BrowserSessionManager.obtain_manager()
+
     def _on_verification_signal(evt_dict: dict):
         try:
             event_loop_ref.call_soon_threadsafe(
@@ -253,7 +275,20 @@ async def browser_agent_stream(incoming_call):
 
     coordinator.register_listener(_on_verification_signal)
 
+    def _format_stream_packet(packet: Any) -> str:
+        if isinstance(packet, dict) and packet.get("__custom_event__"):
+            evt_type = packet.get("type", "verification_required")
+            return f"data: {json.dumps({'type': evt_type, 'reason': packet.get('reason', '')})}\n\n"
+        return f"data: {json.dumps({'type': 'log', 'text': str(packet)})}\n\n"
+
+    async def _is_client_disconnected() -> bool:
+        try:
+            return await incoming_call.is_disconnected()
+        except Exception:
+            return False
+
     async def _stream_producer():
+        async_worker = None
         try:
             yield f"data: {json.dumps({'type': 'status', 'text': 'Starting Edge Browser Navigation Pipeline...'})}\n\n"
 
@@ -263,45 +298,57 @@ async def browser_agent_stream(incoming_call):
                 except Exception:
                     pass
 
-            llm_runtime = construct_agent_llm(on_status_change=_publish_status)
-            manager_handle = BrowserSessionManager.obtain_manager()
-            browser_handle = await manager_handle.acquire_session(background_operation=is_background)
-            verification_controller = build_verification_controller()
+            async def _execute_pipeline():
+                llm_runtime = construct_agent_llm(on_status_change=_publish_status)
+                browser_handle = await manager_handle.acquire_session(background_operation=is_background)
+                verification_controller = build_verification_controller()
 
-            navigation_agent = Agent(
-                task=goal_directive,
-                llm=llm_runtime,
-                browser=browser_handle,
-                controller=verification_controller,
-                extend_system_message=BROWSER_SPEED_DIRECTIVES,
-                highlight_actions=False,
-                mode="ultrafast",
-                judge=False,
-            )
-
-            async def _execute_loop():
+                navigation_agent = Agent(
+                    task=goal_directive,
+                    llm=llm_runtime,
+                    browser=browser_handle,
+                    controller=verification_controller,
+                    extend_system_message=BROWSER_SPEED_DIRECTIVES,
+                    highlight_actions=False,
+                    mode="ultrafast",
+                    judge=False,
+                )
                 return await navigation_agent.run()
 
-            async_worker = asyncio.create_task(_execute_loop())
+            async_worker = asyncio.create_task(_execute_pipeline())
+            task_coordinator.attach_task(run_id, async_worker)
 
             while not async_worker.done():
+                if stop_event.is_set() or await _is_client_disconnected():
+                    if not async_worker.done():
+                        async_worker.cancel()
+                    break
                 try:
-                    packet = await asyncio.wait_for(stream_queue.get(), timeout=0.25)
-                    if isinstance(packet, dict) and packet.get("__custom_event__"):
-                        evt_type = packet.get("type", "verification_required")
-                        yield f"data: {json.dumps({'type': evt_type, 'reason': packet.get('reason', '')})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'type': 'log', 'text': str(packet)})}\n\n"
+                    packet = await asyncio.wait_for(stream_queue.get(), timeout=0.15)
+                    yield _format_stream_packet(packet)
                 except asyncio.TimeoutError:
                     continue
 
+            if stop_event.is_set() or task_coordinator.stop_requested or await _is_client_disconnected():
+                if not async_worker.done():
+                    async_worker.cancel()
+                    try:
+                        await asyncio.wait([async_worker], timeout=2.0)
+                    except Exception:
+                        pass
+                try:
+                    await asyncio.wait_for(manager_handle.terminate_session(), timeout=5.0)
+                except Exception:
+                    pass
+                try:
+                    TaskHistoryDatabase.record_task(goal_directive, False)
+                except Exception as history_fault:
+                    service_logger.warning(f"Could not record stopped task history: {history_fault}")
+                yield f"data: {json.dumps({'type': 'stopped', 'text': 'Task and browser agent stopped by user.'})}\n\n"
+                return
+
             while not stream_queue.empty():
-                packet = stream_queue.get_nowait()
-                if isinstance(packet, dict) and packet.get("__custom_event__"):
-                    evt_type = packet.get("type", "verification_required")
-                    yield f"data: {json.dumps({'type': evt_type, 'reason': packet.get('reason', '')})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'type': 'log', 'text': str(packet)})}\n\n"
+                yield _format_stream_packet(stream_queue.get_nowait())
 
             loop_outcome = await async_worker
             extracted_text, is_healthy = manager_handle.extract_task_conclusion(loop_outcome)
@@ -313,18 +360,43 @@ async def browser_agent_stream(incoming_call):
 
             yield f"data: {json.dumps({'type': 'result', 'text': extracted_text, 'success': is_healthy, 'is_api_limit': not is_healthy and bool(analyze_provider_exception(extracted_text))})}\n\n"
 
-        except Exception as caught_fault:
+        except asyncio.CancelledError:
+            if async_worker is not None and not async_worker.done():
+                async_worker.cancel()
+            try:
+                await asyncio.wait_for(manager_handle.terminate_session(), timeout=5.0)
+            except Exception:
+                pass
             try:
                 TaskHistoryDatabase.record_task(goal_directive, False)
             except Exception:
                 pass
-            fault_diagnostic = analyze_provider_exception(caught_fault)
-            if fault_diagnostic:
-                yield f"data: {json.dumps({'type': 'api_limit', 'is_api_limit': True, 'api_name': fault_diagnostic['provider_title'], 'limit_type': fault_diagnostic['category'], 'text': str(caught_fault)})}\n\n"
+            yield f"data: {json.dumps({'type': 'stopped', 'text': 'Task and browser agent stopped by user.'})}\n\n"
+
+        except Exception as caught_fault:
+            if stop_event.is_set() or task_coordinator.stop_requested:
+                try:
+                    await asyncio.wait_for(manager_handle.terminate_session(), timeout=5.0)
+                except Exception:
+                    pass
+                try:
+                    TaskHistoryDatabase.record_task(goal_directive, False)
+                except Exception:
+                    pass
+                yield f"data: {json.dumps({'type': 'stopped', 'text': 'Task and browser agent stopped by user.'})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'error', 'text': str(caught_fault)})}\n\n"
+                try:
+                    TaskHistoryDatabase.record_task(goal_directive, False)
+                except Exception:
+                    pass
+                fault_diagnostic = analyze_provider_exception(caught_fault)
+                if fault_diagnostic:
+                    yield f"data: {json.dumps({'type': 'api_limit', 'is_api_limit': True, 'api_name': fault_diagnostic['provider_title'], 'limit_type': fault_diagnostic['category'], 'text': str(caught_fault)})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'type': 'error', 'text': str(caught_fault)})}\n\n"
         finally:
             coordinator.reset()
+            task_coordinator.finish_run(run_id)
             agent_logger_handle.removeHandler(collector_broker)
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
@@ -356,6 +428,7 @@ def build_server_app() -> Starlette:
         Route("/media/brand_mark.png", serve_brand_mark, methods=["GET"]),
         Route("/logo.png", serve_brand_mark, methods=["GET"]),
         Route("/api/run", browser_agent_stream, methods=["GET"]),
+        Route("/api/stop", stop_browser_task_action, methods=["POST"]),
         Route("/api/resume-verification", resume_verification_action, methods=["POST"]),
         Route("/api/chat", dialogue_turn_action, methods=["POST"]),
         Route("/api/keys", get_keys_action, methods=["GET"]),

@@ -650,7 +650,30 @@ textarea:focus {
     font-size: 1rem;
     padding: 0.65rem 1.75rem;
 }
-.btn-action:hover { background: var(--accent-hover); }
+.btn-action:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-action:disabled {
+    opacity: 0.65;
+    cursor: not-allowed;
+}
+
+.btn-stop {
+    background: var(--accent-rose);
+    color: white;
+    font-size: 1rem;
+    padding: 0.65rem 1.35rem;
+    box-shadow: 0 2px 10px rgba(239, 68, 68, 0.28);
+}
+.btn-stop:hover:not(:disabled) {
+    background: #dc2626;
+    box-shadow: 0 4px 14px rgba(239, 68, 68, 0.42);
+}
+.btn-stop:disabled {
+    background: rgba(239, 68, 68, 0.18);
+    color: rgba(248, 250, 252, 0.42);
+    border: 1px solid rgba(239, 68, 68, 0.28);
+    box-shadow: none;
+    cursor: not-allowed;
+}
 
 .btn-accent {
     background: rgba(139, 92, 246, 0.2);

@@ -3,6 +3,7 @@ let retainedResearchOutput = '';
 let conversationHistoryRecords = [];
 let activeLiveStreamConnection = null;
 let isTaskRunning = false;
+let isStoppingTask = false;
 
 function hideTaskHistory() {
     const container = document.getElementById('taskHistoryContainer');
@@ -379,6 +380,7 @@ function triggerBrowserWorkflow() {
 
     const isBackground = document.getElementById('backgroundModeCheckbox').checked;
     const triggerTaskButton = document.getElementById('startExecutionButton');
+    const stopTaskButton = document.getElementById('stopExecutionButton');
     const logsDisplaySection = document.getElementById('liveTerminalCard');
     const summaryDisplayCard = document.getElementById('summaryDisplayCard');
     const summaryContentContainer = document.getElementById('summaryContentContainer');
@@ -388,6 +390,7 @@ function triggerBrowserWorkflow() {
         verificationCard.style.display = 'none';
     }
 
+    isStoppingTask = false;
     isTaskRunning = true;
     hideTaskHistory();
 
@@ -397,6 +400,10 @@ function triggerBrowserWorkflow() {
 
     triggerTaskButton.disabled = true;
     triggerTaskButton.innerHTML = '<span>⏳ Running...</span>';
+    if (stopTaskButton) {
+        stopTaskButton.disabled = false;
+        stopTaskButton.innerHTML = '<span>■ Stop</span>';
+    }
 
     appendLogItem(`Starting task: "${directiveQuery}"`, 'entry-status');
 
@@ -422,6 +429,10 @@ function triggerBrowserWorkflow() {
         }
         triggerTaskButton.disabled = false;
         triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
+        if (stopTaskButton) {
+            stopTaskButton.disabled = true;
+            stopTaskButton.innerHTML = '<span>■ Stop</span>';
+        }
         refreshHistoryAfterOutcome();
     };
 
@@ -480,6 +491,11 @@ function triggerBrowserWorkflow() {
                     statusHeadingElement.style.color = '#fbbf24';
                 }
                 refreshHistoryAfterOutcome();
+            } else if (receivedPacket.type === 'stopped') {
+                const card = document.getElementById('humanVerificationCard');
+                if (card) card.style.display = 'none';
+                appendLogItem(`🛑 ${receivedPacket.text || 'Task and browser agent stopped by user.'}`, 'entry-err');
+                refreshHistoryAfterOutcome();
             } else if (receivedPacket.type === 'error' || receivedPacket.type === 'api_limit') {
                 const card = document.getElementById('humanVerificationCard');
                 if (card) card.style.display = 'none';
@@ -494,9 +510,66 @@ function triggerBrowserWorkflow() {
     };
 
     activeLiveStreamConnection.onerror = () => {
-        appendLogItem('Stream connection concluded.', 'entry-warn');
-        finishTaskStreamUi();
+        if (!isStoppingTask && activeLiveStreamConnection !== null) {
+            appendLogItem('Stream connection concluded.', 'entry-warn');
+            finishTaskStreamUi();
+        }
     };
+}
+
+async function stopBrowserWorkflow() {
+    if (!isTaskRunning || isStoppingTask) return;
+    isStoppingTask = true;
+
+    const triggerTaskButton = document.getElementById('startExecutionButton');
+    const stopTaskButton = document.getElementById('stopExecutionButton');
+    const verificationCard = document.getElementById('humanVerificationCard');
+
+    if (verificationCard) {
+        verificationCard.style.display = 'none';
+    }
+    if (stopTaskButton) {
+        stopTaskButton.disabled = true;
+        stopTaskButton.innerHTML = '<span>⏳ Stopping...</span>';
+    }
+
+    appendLogItem('🛑 Stop requested — halting program and browser agent...', 'entry-warn');
+
+    if (activeLiveStreamConnection) {
+        const streamToClose = activeLiveStreamConnection;
+        activeLiveStreamConnection = null;
+        streamToClose.onmessage = null;
+        streamToClose.onerror = null;
+        streamToClose.close();
+    }
+
+    try {
+        const res = await fetch('/api/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const packet = await res.json().catch(() => ({}));
+        if (res.ok && packet.success) {
+            appendLogItem(`🛑 ${packet.message || 'Task and browser agent stopped.'}`, 'entry-err');
+        } else {
+            appendLogItem(`🛑 ${packet.message || 'Task execution stopped.'}`, 'entry-warn');
+        }
+    } catch (networkFault) {
+        appendLogItem(`⚠️ Stop request notice: ${networkFault.message}`, 'entry-warn');
+    } finally {
+        isStoppingTask = false;
+        isTaskRunning = false;
+        if (triggerTaskButton) {
+            triggerTaskButton.disabled = false;
+            triggerTaskButton.innerHTML = '<span>▶ Run Task</span>';
+        }
+        if (stopTaskButton) {
+            stopTaskButton.disabled = true;
+            stopTaskButton.innerHTML = '<span>■ Stop</span>';
+        }
+        fetchTaskHistory();
+    }
 }
 
 function escapeHtml(rawString) {

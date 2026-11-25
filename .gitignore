@@ -6,7 +6,7 @@ agent_secrets.env
 task_history.db
 
 # Documentation (sensitive)
-API.docx
+*.docx
 
 # Python
 __pycache__/

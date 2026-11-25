@@ -17,6 +17,7 @@ def execute_all_verifications():
     from qa_suite.test_http_gateway import TestHttpGateway
     from qa_suite.test_history import TestTaskHistory
     from qa_suite.test_verification import TestHumanVerificationFlow
+    from qa_suite.test_stop_execution import TestStopExecution
 
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestSettingsValidation))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestFaultDetection))
@@ -24,6 +25,7 @@ def execute_all_verifications():
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestHttpGateway))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestTaskHistory))
     suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestHumanVerificationFlow))
+    suite_collector.addTests(loader_engine.loadTestsFromTestCase(TestStopExecution))
 
     runner_engine = unittest.TextTestRunner(verbosity=2)
     suite_summary = runner_engine.run(suite_collector)
