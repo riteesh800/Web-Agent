@@ -1,4 +1,8 @@
 import asyncio
+import os
+import shutil
+import sys
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from browser_use import Agent, Browser, Controller
@@ -97,6 +101,35 @@ def build_verification_controller() -> Controller:
     return controller
 
 
+def _find_edge_executable() -> Optional[str]:
+    """Locate the installed Microsoft Edge binary, returning None to fall back to default Chromium discovery."""
+    if sys.platform == "win32":
+        candidates = []
+        for env_var in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
+            base_dir = os.environ.get(env_var)
+            if base_dir:
+                candidates.append(Path(base_dir) / "Microsoft" / "Edge" / "Application" / "msedge.exe")
+        which_edge = shutil.which("msedge")
+        if which_edge:
+            candidates.append(Path(which_edge))
+    elif sys.platform == "darwin":
+        candidates = [
+            Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"),
+            Path.home() / "Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ]
+    else:
+        candidates = [
+            Path(found)
+            for name in ("microsoft-edge-stable", "microsoft-edge")
+            if (found := shutil.which(name))
+        ]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 class BrowserSessionManager:
     _singleton_handle: Optional["BrowserSessionManager"] = None
 
@@ -128,7 +161,14 @@ class BrowserSessionManager:
                 and self.active_session._local.proc.poll() is not None
             )
         ):
-            self.active_session = Browser("edge", headless=background_operation, keep_alive=True)
+            edge_executable = _find_edge_executable()
+            browser_kwargs: Dict[str, Any] = {
+                "headless": background_operation,
+                "keep_alive": True,
+            }
+            if edge_executable:
+                browser_kwargs["executable_path"] = edge_executable
+            self.active_session = Browser("chromium", **browser_kwargs)
 
         return self.active_session
 

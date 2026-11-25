@@ -9,6 +9,7 @@ if suite_directory not in sys.path:
     sys.path.insert(0, suite_directory)
 
 from agent_core.navigation_driver import (
+    BrowserSessionManager,
     HumanVerificationCoordinator,
     build_verification_controller,
 )
@@ -92,6 +93,16 @@ class TestHumanVerificationFlow(unittest.TestCase):
 
             result_str = await worker_task
             self.assertIn("confirmed", result_str)
+
+        asyncio.run(_test())
+
+    def test_browser_session_manager_creates_chromium_edge_browser(self):
+        async def _test():
+            manager = BrowserSessionManager()
+            browser = await manager.acquire_session(background_operation=True)
+            self.assertEqual(browser.kind, "chromium")
+            self.assertTrue(browser.headless)
+            self.assertTrue(browser.keep_alive)
 
         asyncio.run(_test())
 
