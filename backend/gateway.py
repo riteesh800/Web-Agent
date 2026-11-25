@@ -304,7 +304,7 @@ async def browser_agent_stream(incoming_call):
         async_worker = None
         try:
             start_status = (
-                "Attaching to your open browser session (Edge / Chrome)..."
+                "Attaching to your open Microsoft Edge browser session..."
                 if browser_mode == "attached"
                 else "Starting Edge Browser Navigation Pipeline..."
             )

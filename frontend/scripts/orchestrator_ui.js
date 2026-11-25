@@ -396,7 +396,7 @@ async function refreshOpenBrowserStatus() {
             badge.textContent = `✔ Ready: ${(status.browsers || ['Open Browser']).join(', ')}`;
         } else {
             badge.className = 'open-browser-status-badge status-warn';
-            badge.textContent = 'Needs remote debugging toggle in Edge/Chrome';
+            badge.textContent = 'Needs remote debugging toggle in Microsoft Edge';
         }
     } catch (err) {
         badge.className = 'open-browser-status-badge status-pending';

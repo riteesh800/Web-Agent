@@ -33,7 +33,7 @@ BROWSER_SPEED_DIRECTIVES = (
     "     Stop immediately and report clearly that isolated automation mode is blocked by Google's browser-security check "
     "(Chromium launched with --remote-debugging-port sets navigator.webdriver=true and starts with an empty temporary profile). "
     "Instruct the user to enable 'Use Open Browser (Gmail / Logged-In Sites)' in the Web Agent UI, turn on remote debugging "
-    "at edge://inspect/#remote-debugging (Microsoft Edge) or chrome://inspect/#remote-debugging (Google Chrome), and sign in normally there.\n\n"
+    "at edge://inspect/#remote-debugging in Microsoft Edge, and sign in normally there.\n\n"
     "6. STRUCTURED REPORTING:\n"
     "   - Conclude with a clean, bulleted Markdown synthesis including product names, links, and pricing."
 )
@@ -187,10 +187,10 @@ def build_verification_controller() -> Controller:
     return controller
 
 
-def _find_edge_executable() -> Optional[str]:
-    """Locate the installed Microsoft Edge binary, returning None to fall back to default Chromium discovery."""
+def _find_edge_executable() -> str:
+    """Locate the installed Microsoft Edge binary. Raises RuntimeError if not found to strictly enforce Edge."""
+    candidates = []
     if sys.platform == "win32":
-        candidates = []
         for env_var in ("PROGRAMFILES(X86)", "PROGRAMFILES", "LOCALAPPDATA"):
             base_dir = os.environ.get(env_var)
             if base_dir:
@@ -213,94 +213,114 @@ def _find_edge_executable() -> Optional[str]:
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate)
-    return None
+
+    raise RuntimeError(
+        "Microsoft Edge executable was not found. This project is strictly configured to use Microsoft Edge only. "
+        "Please ensure Microsoft Edge is installed."
+    )
 
 
 def normalize_browser_mode(browser_mode: Optional[str]) -> str:
-    """Normalize requested browser session mode to 'attached' or 'isolated'."""
+    """Normalize requested browser session mode to 'attached' or 'isolated'. Strictly forbids Chrome."""
     cleaned = (browser_mode or "").strip().lower()
-    if cleaned in {"attached", "open", "open_browser", "chrome"}:
+    if "chrome" in cleaned:
+        raise ValueError("Google Chrome is strictly disallowed in this project. Only Microsoft Edge is supported.")
+    if cleaned in {"attached", "open", "open_browser", "edge"}:
         return "attached"
     return "isolated"
 
 
-def _label_browser_profile_dir(profile_dir: Path) -> str:
-    """Return a friendly browser name for a Chromium user-data directory."""
-    normalized = str(profile_dir).replace("\\", "/").lower()
-    if "microsoft/edge" in normalized or "microsoft edge" in normalized or "microsoft-edge" in normalized:
-        return "Microsoft Edge"
-    if "google/chrome" in normalized:
-        return "Google Chrome"
-    if "brave" in normalized:
-        return "Brave"
-    if "chromium" in normalized:
-        return "Chromium"
-    return profile_dir.name or "Browser"
+def get_edge_user_data_dirs() -> list[Path]:
+    """Locate Microsoft Edge user-data directories across platforms."""
+    dirs = []
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            base = Path(local_app_data) / "Microsoft"
+            for variant in ("Edge", "Edge Beta", "Edge Dev", "Edge SxS"):
+                dirs.append(base / variant / "User Data")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support" / "Microsoft Edge"
+        dirs.append(base)
+    else:
+        dirs.append(Path.home() / ".config" / "microsoft-edge")
+        dirs.append(Path.home() / ".config" / "microsoft-edge-beta")
+        dirs.append(Path.home() / ".config" / "microsoft-edge-dev")
+    return dirs
+
+
+def find_edge_devtools_port() -> Optional[int]:
+    """Find the live DevTools port for Microsoft Edge if remote debugging is active."""
+    import socket
+
+    for base in get_edge_user_data_dirs():
+        port_file = base / "DevToolsActivePort"
+        if not port_file.is_file():
+            continue
+        try:
+            port = int(port_file.read_text(encoding="utf-8", errors="replace").splitlines()[0].strip())
+            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                return port
+        except (OSError, ValueError, IndexError):
+            continue
+    return None
 
 
 def detect_open_browser_debugging() -> Dict[str, Any]:
-    """Check whether any local Edge/Chrome browser currently has remote debugging enabled."""
+    """Check whether Microsoft Edge currently has remote debugging enabled."""
     try:
-        from browser_use.browser import local as browser_local
-
-        live_dirs = browser_local.live_debug_dirs()
-        browsers = [_label_browser_profile_dir(path) for path in live_dirs]
-        ambiguous = len(live_dirs) > 1 and live_dirs[0] != browser_local.chrome_user_data_dir()
+        live_port = find_edge_devtools_port()
+        edge_dirs = [str(d) for d in get_edge_user_data_dirs() if d.exists()]
         return {
-            "ready": len(live_dirs) > 0,
-            "ambiguous": ambiguous,
-            "browsers": browsers,
-            "dirs": [str(path) for path in live_dirs],
+            "ready": live_port is not None,
+            "browser": "Microsoft Edge",
+            "browsers": ["Microsoft Edge"] if live_port is not None else [],
+            "port": live_port,
+            "dirs": edge_dirs,
         }
     except Exception as exc:
         return {
             "ready": False,
-            "ambiguous": False,
+            "browser": "Microsoft Edge",
             "browsers": [],
+            "port": None,
             "dirs": [],
             "error": str(exc),
         }
 
 
 def format_browser_connection_guidance(error: Any) -> Optional[str]:
-    """Translate low-level browser-harness attachment errors into clear Edge/Chrome instructions."""
+    """Translate browser attachment errors into clear Microsoft Edge instructions."""
     raw = str(error or "")
     lower = raw.lower()
-
-    if "several browsers have remote debugging on" in lower:
-        return (
-            "Multiple browsers currently have remote debugging enabled, and none of them is Google Chrome. "
-            "Turn off 'Allow remote debugging for this browser instance' in all browsers except the one you want "
-            "the agent to control (edge://inspect/#remote-debugging for Microsoft Edge or chrome://inspect/#remote-debugging for Chrome), then run again."
-        )
 
     if any(
         token in lower
         for token in (
             "remote-debugging-setup",
             "devtoolsactiveport not found",
-            "enable chrome://inspect",
             "not live yet",
+            "edge remote debugging is not enabled",
         )
     ):
         return (
-            "Open-browser attachment needs remote debugging enabled in your running browser (one-time per browser session):\n"
-            "1. Open Microsoft Edge (or Google Chrome) normally and sign into Gmail or your sites there.\n"
-            "2. Visit edge://inspect/#remote-debugging (in Edge) or chrome://inspect/#remote-debugging (in Chrome).\n"
+            "Open-browser attachment needs remote debugging enabled in Microsoft Edge (one-time per browser session):\n"
+            "1. Open Microsoft Edge normally and sign into Gmail or your sites there.\n"
+            "2. Visit edge://inspect/#remote-debugging in Microsoft Edge.\n"
             "3. Tick 'Allow remote debugging for this browser instance'.\n"
-            "4. Run your task again and click 'Allow' on the browser's permission prompt."
+            "4. Run your task again and click 'Allow' on Microsoft Edge's permission prompt."
         )
 
     if "permission-blocked" in lower:
         return (
-            "Your browser did not approve the remote debugging connection (the 'Allow remote debugging?' prompt was dismissed, denied, or timed out). "
-            "Run the task again and click 'Allow' when Microsoft Edge or Google Chrome asks."
+            "Microsoft Edge did not approve the remote debugging connection (the 'Allow remote debugging?' prompt was dismissed, denied, or timed out). "
+            "Run the task again and click 'Allow' when Microsoft Edge asks."
         )
 
-    if "chrome-not-running" in lower:
+    if "edge-not-running" in lower or "no running microsoft edge" in lower:
         return (
-            "No running Microsoft Edge or Google Chrome window was found to attach to. "
-            "Open your browser normally, enable remote debugging at edge://inspect/#remote-debugging (or chrome://inspect/#remote-debugging), and run the task again."
+            "No running Microsoft Edge window with active remote debugging was found to attach to. "
+            "Open Microsoft Edge normally, enable remote debugging at edge://inspect/#remote-debugging, and run the task again."
         )
 
     return None
@@ -321,7 +341,7 @@ class BrowserSessionManager:
 
     async def acquire_session(self, background_operation: bool, browser_mode: str = "isolated") -> Browser:
         normalized_mode = normalize_browser_mode(browser_mode)
-        target_kind = "chrome" if normalized_mode == "attached" else "chromium"
+        target_kind = "cdp" if normalized_mode == "attached" else "chromium"
 
         if self.active_session is not None:
             session_kind = getattr(self.active_session, "kind", None)
@@ -346,16 +366,22 @@ class BrowserSessionManager:
                 and self.active_session._local.proc.poll() is not None
             )
         ):
-            if target_kind == "chrome":
-                self.active_session = Browser("chrome", keep_alive=True)
+            if target_kind == "cdp":
+                edge_port = find_edge_devtools_port()
+                if edge_port is None:
+                    raise RuntimeError(
+                        "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge. "
+                        "Please open Microsoft Edge, navigate to edge://inspect/#remote-debugging, "
+                        "and tick 'Allow remote debugging for this browser instance'."
+                    )
+                self.active_session = Browser(cdp_url=f"http://127.0.0.1:{edge_port}", keep_alive=True)
             else:
                 edge_executable = _find_edge_executable()
                 browser_kwargs: Dict[str, Any] = {
                     "headless": background_operation,
                     "keep_alive": True,
+                    "executable_path": edge_executable,
                 }
-                if edge_executable:
-                    browser_kwargs["executable_path"] = edge_executable
                 self.active_session = Browser("chromium", **browser_kwargs)
             self.active_mode = normalized_mode
 

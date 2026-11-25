@@ -169,7 +169,7 @@ class TestHttpGateway(unittest.TestCase):
                             events.append(json.loads(line[6:]))
 
                 self.assertEqual(captured_calls, [(False, "attached")])
-                self.assertTrue(any("Attaching to your open browser session" in evt.get("text", "") for evt in events))
+                self.assertTrue(any("Attaching to your open Microsoft Edge browser session" in evt.get("text", "") for evt in events))
                 self.assertTrue(any(evt.get("type") == "result" and evt.get("success") for evt in events))
 
         try:

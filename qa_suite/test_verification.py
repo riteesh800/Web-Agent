@@ -4,7 +4,7 @@ import sys
 import unittest
 from starlette.testclient import TestClient
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 suite_directory = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if suite_directory not in sys.path:
@@ -113,49 +113,52 @@ class TestHumanVerificationFlow(unittest.TestCase):
     def test_browser_session_manager_attached_open_browser_mode_and_switch(self):
         async def _test():
             manager = BrowserSessionManager()
-            attached = await manager.acquire_session(background_operation=False, browser_mode="attached")
-            self.assertEqual(attached.kind, "chrome")
-            self.assertIsNone(attached.headless)
-            self.assertTrue(attached.keep_alive)
-            self.assertEqual(manager.active_mode, "attached")
+            with patch("agent_core.navigation_driver.find_edge_devtools_port", return_value=9222):
+                attached = await manager.acquire_session(background_operation=False, browser_mode="attached")
+                self.assertEqual(attached.kind, "cdp")
+                self.assertEqual(attached.cdp_url, "http://127.0.0.1:9222")
+                self.assertTrue(attached.keep_alive)
+                self.assertEqual(manager.active_mode, "attached")
 
-            # Switching back to isolated stops prior session cleanly
-            attached.stop = AsyncMock()
-            isolated = await manager.acquire_session(background_operation=False, browser_mode="isolated")
-            attached.stop.assert_awaited_once()
-            self.assertEqual(isolated.kind, "chromium")
-            self.assertFalse(isolated.headless)
-            self.assertEqual(manager.active_mode, "isolated")
+                # Switching back to isolated stops prior session cleanly
+                attached.stop = AsyncMock()
+                isolated = await manager.acquire_session(background_operation=False, browser_mode="isolated")
+                attached.stop.assert_awaited_once()
+                self.assertEqual(isolated.kind, "chromium")
+                self.assertFalse(isolated.headless)
+                self.assertEqual(manager.active_mode, "isolated")
 
         asyncio.run(_test())
 
     def test_normalize_browser_mode(self):
         self.assertEqual(normalize_browser_mode("attached"), "attached")
         self.assertEqual(normalize_browser_mode("open_browser"), "attached")
-        self.assertEqual(normalize_browser_mode("chrome"), "attached")
+        self.assertEqual(normalize_browser_mode("edge"), "attached")
         self.assertEqual(normalize_browser_mode("isolated"), "isolated")
         self.assertEqual(normalize_browser_mode(""), "isolated")
         self.assertEqual(normalize_browser_mode(None), "isolated")
 
+        # Chrome is strictly forbidden
+        with self.assertRaises(ValueError):
+            normalize_browser_mode("chrome")
+        with self.assertRaises(ValueError):
+            normalize_browser_mode("google-chrome")
+
     def test_format_browser_connection_guidance(self):
         setup_msg = format_browser_connection_guidance(
-            "Browser('chrome') could not attach: remote-debugging-setup: DevToolsActivePort not found"
+            "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge"
         )
         self.assertIsNotNone(setup_msg)
         self.assertIn("edge://inspect/#remote-debugging", setup_msg)
-        self.assertIn("chrome://inspect/#remote-debugging", setup_msg)
+        self.assertNotIn("chrome://inspect", setup_msg)
 
-        perm_msg = format_browser_connection_guidance("permission-blocked: Chrome did not approve")
+        perm_msg = format_browser_connection_guidance("permission-blocked: Edge did not approve")
         self.assertIsNotNone(perm_msg)
         self.assertIn("Allow", perm_msg)
 
-        not_running = format_browser_connection_guidance("chrome-not-running: no browser running")
+        not_running = format_browser_connection_guidance("edge-not-running: no running microsoft edge")
         self.assertIsNotNone(not_running)
         self.assertIn("Microsoft Edge", not_running)
-
-        multi = format_browser_connection_guidance("several browsers have remote debugging on")
-        self.assertIsNotNone(multi)
-        self.assertIn("Multiple browsers", multi)
 
         self.assertIsNone(format_browser_connection_guidance("Some unrelated ValueError"))
 
@@ -167,7 +170,7 @@ class TestHumanVerificationFlow(unittest.TestCase):
         fake_result.messages = None
         fake_result.status = "error"
         fake_result.has_errors.return_value = True
-        fake_result.error = "Browser('chrome') could not attach: remote-debugging-setup"
+        fake_result.error = "remote-debugging-setup: DevToolsActivePort not found for Microsoft Edge"
 
         summary, is_valid = BrowserSessionManager.extract_task_conclusion(fake_result)
         self.assertFalse(is_valid)
